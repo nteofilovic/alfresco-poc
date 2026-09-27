@@ -1,0 +1,26 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: dms-poc-api
+  servlet:
+    multipart:
+      max-file-size: 100MB
+      max-request-size: 100MB
+
+alfresco:
+  base-url: http://localhost:8080
+  username: admin
+  password: admin
+  # Node id of the folder documents/merges are written under by default.
+  # "-my-" resolves to the logged-in user's Home folder; -root- is the repository root.
+  default-parent-id: -my-
+
+app:
+  cors:
+    allowed-origins: "http://localhost:5173,http://localhost:3000"
+
+logging:
+  level:
+    ch.dmspoc: INFO
