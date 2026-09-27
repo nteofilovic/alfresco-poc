@@ -1,0 +1,14 @@
+# Java / Maven
+api/target/
+
+# Node
+web/node_modules/
+web/dist/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
