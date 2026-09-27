@@ -41,7 +41,7 @@ public class AlfrescoClient {
     // ---------------------------------------------------------------- nodes
 
     public JsonNode getNode(String nodeId, String include) {
-        return get("/nodes/" + enc(nodeId), Map.of("include", include));
+        return get("/nodes/" + enc(nodeId), mapOf("include", include));
     }
 
     public JsonNode listChildren(String parentId, String where, int skip, int maxItems) {

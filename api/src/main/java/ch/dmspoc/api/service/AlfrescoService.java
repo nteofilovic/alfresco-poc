@@ -109,12 +109,18 @@ public class AlfrescoService {
         }
     }
 
+    /**
+     * Alfresco's "where" filter on /children only supports isFolder/isFile/nodeType, not name, so
+     * matching by name is done client-side over the (typically small) list of existing subfolders.
+     */
     private String findOrCreateChildFolder(String parentId, String name) {
-        JsonNode entries = client.listChildren(parentId,
-                "(name='" + name.replace("'", "\\'") + "' and isFolder=true)", 0, 1)
+        JsonNode entries = client.listChildren(parentId, "(isFolder=true)", 0, 1000)
                 .path("list").path("entries");
-        if (entries.isArray() && !entries.isEmpty()) {
-            return entries.get(0).path("entry").path("id").asText();
+        for (JsonNode e : entries) {
+            JsonNode entry = e.path("entry");
+            if (name.equals(entry.path("name").asText())) {
+                return entry.path("id").asText();
+            }
         }
         return client.createFolder(parentId, name).path("entry").path("id").asText();
     }
@@ -152,7 +158,9 @@ public class AlfrescoService {
         List<String> aspects = new ArrayList<>();
         e.path("aspectNames").forEach(a -> aspects.add(a.asText()));
 
-        Map<String, Object> properties = mapper.convertValue(e.path("properties"), Map.class);
+        Map<String, Object> properties = e.has("properties")
+                ? mapper.convertValue(e.get("properties"), Map.class)
+                : Map.of();
 
         return new NodeDto(
                 e.path("id").asText(),
@@ -166,11 +174,16 @@ public class AlfrescoService {
                 parseDate(e.path("modifiedAt").asText(null)),
                 e.path("createdByUser").path("displayName").asText(null),
                 aspects,
-                properties != null ? properties : Map.of()
+                properties
         );
     }
 
+    // Alfresco returns dates like "2026-09-27T14:23:52.862+0000" - a valid ISO-8601 offset,
+    // but without the colon that OffsetDateTime.parse()'s default formatter requires.
+    private static final java.time.format.DateTimeFormatter ALFRESCO_DATE_FORMAT =
+            java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSZ");
+
     private OffsetDateTime parseDate(String s) {
-        return s == null ? null : OffsetDateTime.parse(s);
+        return s == null ? null : OffsetDateTime.parse(s, ALFRESCO_DATE_FORMAT);
     }
 }
