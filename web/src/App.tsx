@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, type NodeDto } from './api'
 import { formatBytes, formatDate, iconFor } from './formatters'
+import { LoginForm } from './LoginForm'
 import './App.css'
 
 interface Crumb {
@@ -11,6 +12,8 @@ interface Crumb {
 const ROOT: Crumb = { id: '-my-', name: 'Home' }
 
 function App() {
+  const [authChecked, setAuthChecked] = useState(false)
+  const [username, setUsername] = useState<string | null>(null)
   const [breadcrumb, setBreadcrumb] = useState<Crumb[]>([ROOT])
   const [nodes, setNodes] = useState<NodeDto[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -39,8 +42,23 @@ function App() {
   }, [])
 
   useEffect(() => {
-    loadFolder(currentFolder.id)
-  }, [currentFolder.id, loadFolder])
+    api
+      .me()
+      .then((user) => setUsername(user.username))
+      .catch(() => setUsername(null))
+      .finally(() => setAuthChecked(true))
+  }, [])
+
+  useEffect(() => {
+    if (username) loadFolder(currentFolder.id)
+  }, [username, currentFolder.id, loadFolder])
+
+  async function handleLogout() {
+    await api.logout()
+    setUsername(null)
+    setBreadcrumb([ROOT])
+    setSearchResults(null)
+  }
 
   function openFolder(node: NodeDto) {
     setSearchResults(null)
@@ -140,6 +158,14 @@ function App() {
   const displayedNodes = searchResults ?? nodes
   const mergeableSelectedCount = displayedNodes.filter((n) => selected.has(n.id) && n.isFile).length
 
+  if (!authChecked) {
+    return <div className="loading">Loading…</div>
+  }
+
+  if (!username) {
+    return <LoginForm onLoggedIn={setUsername} />
+  }
+
   return (
     <div className="app">
       <header className="topbar">
@@ -157,6 +183,12 @@ function App() {
             </button>
           )}
         </form>
+        <div className="user-menu">
+          <span className="username">{username}</span>
+          <button type="button" className="ghost" onClick={handleLogout}>
+            Sign out
+          </button>
+        </div>
       </header>
 
       {!searchResults && (

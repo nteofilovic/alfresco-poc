@@ -17,7 +17,16 @@ public class CorsConfig {
                 registry.addMapping("/api/**")
                         .allowedOrigins(allowedOrigins.split(","))
                         .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
-                        .allowedHeaders("*");
+                        .allowedHeaders("*")
+                        // The session cookie set on login must be sent back on later /api/** calls.
+                        .allowCredentials(true);
+            }
+
+            @Override
+            public void addInterceptors(org.springframework.web.servlet.config.annotation.InterceptorRegistry registry) {
+                registry.addInterceptor(new AuthInterceptor())
+                        .addPathPatterns("/api/**")
+                        .excludePathPatterns("/api/auth/**");
             }
         };
     }

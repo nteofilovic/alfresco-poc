@@ -29,6 +29,22 @@ public class RestClientConfig {
         return builder(props).baseUrl(props.baseUrl() + "/alfresco/api/-default-/public/search/versions/1").build();
     }
 
+    /**
+     * Unauthenticated client used only to validate a user-supplied username/password against
+     * Alfresco at login time (each request adds its own Basic auth header). Kept separate from
+     * {@link #alfrescoRestClient} so the app's own service-account credentials never mix with a
+     * login attempt's credentials.
+     */
+    @Bean
+    public RestClient alfrescoAuthProbeRestClient(AlfrescoProperties props) {
+        var requestFactory = new HttpComponentsClientHttpRequestFactory(HttpClients.createDefault());
+        requestFactory.setConnectTimeout(10_000);
+        return RestClient.builder()
+                .baseUrl(props.baseUrl() + "/alfresco/api/-default-/public/alfresco/versions/1")
+                .requestFactory(requestFactory)
+                .build();
+    }
+
     private RestClient.Builder builder(AlfrescoProperties props) {
         String basicAuth = "Basic " + Base64.getEncoder().encodeToString(
                 (props.username() + ":" + props.password()).getBytes(StandardCharsets.UTF_8));

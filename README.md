@@ -16,6 +16,10 @@ is the only thing that knows Alfresco's REST API shapes, credentials and interna
 - **Custom metadata**: apply an arbitrary Alfresco aspect + property values to a node
   (`PUT /api/nodes/{id}/metadata`) — the API layer that a Custom Model Manager-defined metadata
   form would call.
+- **Login**: the React app shows a sign-in form first. `POST /api/auth/login` validates the
+  submitted username/password directly against Alfresco and, on success, marks the HTTP session
+  as authenticated; every other `/api/**` endpoint is blocked until then (`AuthController`,
+  `AuthInterceptor`). Try it with Alfresco's built-in `admin` / `admin`.
 - **Sites + folder-structure templates**: `POST /api/sites` creates an Alfresco Collaboration Site
   and builds a caller-supplied list of subfolders (e.g. `["01 Contracts", "02 Invoices/Paid"]`)
   inside its Document Library — the "define a folder structure per project" feature on top of
@@ -74,8 +78,12 @@ web/                  React 19 + TypeScript + Vite
 
 ## Notes on what's simplified for a POC
 
-- Auth is HTTP Basic against Alfresco's built-in `admin` user (`application.yml`); a real product
-  needs its own user/tenant model in the Spring Boot layer instead of one shared Alfresco login.
+- The login screen only checks the submitted credentials are valid Alfresco credentials; every
+  actual Alfresco call still goes through the one shared service account configured in
+  `application.yml` (`alfresco.username`/`alfresco.password`). A real product needs its own
+  user/tenant model in the Spring Boot layer instead of one shared Alfresco login behind the
+  gate, and the session cookie should move to a proper token (JWT, short-lived, refreshable)
+  before this goes anywhere near production.
 - No AMPs or custom content model are installed; the metadata endpoint works with Alfresco's stock
   aspects (e.g. `cm:titled`) until a real content model is added.
 - Multi-page TIFF images only contribute their first page to a merge.
