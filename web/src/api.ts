@@ -63,6 +63,20 @@ export const api = {
 
   downloadUrl: (nodeId: string) => `/api/nodes/${encodeURIComponent(nodeId)}/content`,
 
+  previewUrl: (nodeId: string) => `/api/nodes/${encodeURIComponent(nodeId)}/preview`,
+
+  // 204 means "no preview for this file type" - not an error, so this returns null rather than throwing.
+  fetchPreview: async (nodeId: string): Promise<{ blob: Blob; contentType: string } | null> => {
+    const res = await fetch(api.previewUrl(nodeId), { credentials: 'include' })
+    if (res.status === 204) return null
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      throw new Error(`${res.status} ${res.statusText}: ${body}`)
+    }
+    const blob = await res.blob()
+    return { blob, contentType: res.headers.get('Content-Type') ?? blob.type }
+  },
+
   search: (q: string) =>
     fetch(`/api/search?q=${encodeURIComponent(q)}`, { credentials: 'include' }).then((r) => handle<NodeDto[]>(r)),
 

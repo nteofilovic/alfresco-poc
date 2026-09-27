@@ -16,21 +16,23 @@ export function formatDate(iso: string | null): string {
   return new Date(iso).toLocaleString()
 }
 
-const ICONS: Record<string, string> = {
-  pdf: '📕',
-  doc: '📘',
-  docx: '📘',
-  xls: '📗',
-  xlsx: '📗',
-  jpg: '🖼️',
-  jpeg: '🖼️',
-  png: '🖼️',
-  tif: '🖼️',
-  tiff: '🖼️',
+export type FileKind = 'pdf' | 'word' | 'excel' | 'image' | 'folder' | 'file'
+
+const KINDS: Record<string, FileKind> = {
+  pdf: 'pdf',
+  doc: 'word',
+  docx: 'word',
+  xls: 'excel',
+  xlsx: 'excel',
+  jpg: 'image',
+  jpeg: 'image',
+  png: 'image',
+  tif: 'image',
+  tiff: 'image',
 }
 
-export function iconFor(name: string, isFolder: boolean): string {
-  if (isFolder) return '📁'
+export function kindFor(name: string, isFolder: boolean): FileKind {
+  if (isFolder) return 'folder'
   const ext = name.split('.').pop()?.toLowerCase() ?? ''
-  return ICONS[ext] ?? '📄'
+  return KINDS[ext] ?? 'file'
 }

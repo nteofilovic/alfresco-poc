@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { ChangeEvent, FormEvent } from 'react'
 import { api, type NodeDto } from './api'
-import { formatBytes, formatDate, iconFor } from './formatters'
 import { LoginForm } from './LoginForm'
+import { Topbar } from './components/Topbar'
+import { Breadcrumbs } from './components/Breadcrumbs'
+import { Toolbar } from './components/Toolbar'
+import { FileTable } from './components/FileTable'
+import { PreviewModal } from './components/PreviewModal'
+import { MergeBar } from './components/MergeBar'
+import { ErrorToast } from './components/ErrorToast'
+import { Spinner } from './components/Spinner'
 import './App.css'
 
 interface Crumb {
@@ -23,6 +31,7 @@ function App() {
   const [searchResults, setSearchResults] = useState<NodeDto[] | null>(null)
   const [mergeFileName, setMergeFileName] = useState('merged-document')
   const [merging, setMerging] = useState(false)
+  const [previewNode, setPreviewNode] = useState<NodeDto | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const currentFolder = breadcrumb[breadcrumb.length - 1]
@@ -79,22 +88,30 @@ function App() {
     })
   }
 
-  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
+  const uploadFiles = useCallback(
+    async (files: File[]) => {
+      if (files.length === 0) return
+      setLoading(true)
+      setError(null)
+      try {
+        for (const file of files) {
+          await api.uploadFile(currentFolder.id, file)
+        }
+        await loadFolder(currentFolder.id)
+      } catch (err) {
+        setError(String(err))
+      } finally {
+        setLoading(false)
+      }
+    },
+    [currentFolder.id, loadFolder],
+  )
+
+  async function handleUploadInput(e: ChangeEvent<HTMLInputElement>) {
     const files = e.target.files
     if (!files || files.length === 0) return
-    setLoading(true)
-    setError(null)
-    try {
-      for (const file of Array.from(files)) {
-        await api.uploadFile(currentFolder.id, file)
-      }
-      await loadFolder(currentFolder.id)
-    } catch (err) {
-      setError(String(err))
-    } finally {
-      setLoading(false)
-      if (fileInputRef.current) fileInputRef.current.value = ''
-    }
+    await uploadFiles(Array.from(files))
+    if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
   async function handleNewFolder() {
@@ -121,7 +138,7 @@ function App() {
     }
   }
 
-  async function handleSearch(e: React.FormEvent) {
+  async function handleSearch(e: FormEvent) {
     e.preventDefault()
     if (!searchQuery.trim()) {
       setSearchResults(null)
@@ -159,7 +176,11 @@ function App() {
   const mergeableSelectedCount = displayedNodes.filter((n) => selected.has(n.id) && n.isFile).length
 
   if (!authChecked) {
-    return <div className="loading">Loading…</div>
+    return (
+      <div className="app-loading">
+        <Spinner size={24} label="Loading…" />
+      </div>
+    )
   }
 
   if (!username) {
@@ -168,129 +189,57 @@ function App() {
 
   return (
     <div className="app">
-      <header className="topbar">
-        <h1>Document Workspace</h1>
-        <form className="search" onSubmit={handleSearch}>
-          <input
-            placeholder="Search all documents…"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-          <button type="submit">Search</button>
-          {searchResults && (
-            <button type="button" className="ghost" onClick={() => setSearchResults(null)}>
-              Clear
-            </button>
-          )}
-        </form>
-        <div className="user-menu">
-          <span className="username">{username}</span>
-          <button type="button" className="ghost" onClick={handleLogout}>
-            Sign out
-          </button>
-        </div>
-      </header>
+      <Topbar
+        username={username}
+        searchQuery={searchQuery}
+        hasSearchResults={!!searchResults}
+        onSearchQueryChange={setSearchQuery}
+        onSearchSubmit={handleSearch}
+        onClearSearch={() => setSearchResults(null)}
+        onLogout={handleLogout}
+      />
 
-      {!searchResults && (
-        <nav className="breadcrumb">
-          {breadcrumb.map((c, i) => (
-            <span key={c.id}>
-              {i > 0 && <span className="sep">/</span>}
-              <button className="link" onClick={() => goToBreadcrumb(i)}>
-                {c.name}
-              </button>
-            </span>
-          ))}
-        </nav>
-      )}
-      {searchResults && (
-        <div className="breadcrumb">
-          <span>Search results for "{searchQuery}" ({searchResults.length})</span>
-        </div>
-      )}
+      <Breadcrumbs
+        breadcrumb={breadcrumb}
+        searchResults={searchResults ? { query: searchQuery, count: searchResults.length } : null}
+        onNavigate={goToBreadcrumb}
+      />
 
-      <div className="toolbar">
-        <button onClick={() => fileInputRef.current?.click()} disabled={!!searchResults}>
-          ⬆ Upload
-        </button>
-        <input type="file" multiple ref={fileInputRef} hidden onChange={handleUpload} />
-        <button onClick={handleNewFolder} disabled={!!searchResults}>
-          + New folder
-        </button>
-        <button onClick={() => loadFolder(currentFolder.id)}>↻ Refresh</button>
-      </div>
+      <Toolbar
+        fileInputRef={fileInputRef}
+        disabled={!!searchResults}
+        refreshing={loading}
+        onUpload={handleUploadInput}
+        onNewFolder={handleNewFolder}
+        onRefresh={() => loadFolder(currentFolder.id)}
+      />
 
-      {error && <div className="error">{error}</div>}
-      {loading && <div className="loading">Loading…</div>}
+      {error && <ErrorToast message={error} onDismiss={() => setError(null)} />}
 
-      <table className="node-table">
-        <thead>
-          <tr>
-            <th></th>
-            <th>Name</th>
-            <th>Modified</th>
-            <th>Size</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {displayedNodes.map((node) => (
-            <tr key={node.id} className={selected.has(node.id) ? 'selected' : ''}>
-              <td>
-                {node.isFile && (
-                  <input
-                    type="checkbox"
-                    checked={selected.has(node.id)}
-                    onChange={() => toggleSelected(node.id)}
-                    title="Select for merge"
-                  />
-                )}
-              </td>
-              <td className="name-cell">
-                <span className="icon">{iconFor(node.name, node.isFolder)}</span>
-                {node.isFolder ? (
-                  <button className="link" onClick={() => openFolder(node)}>
-                    {node.name}
-                  </button>
-                ) : (
-                  <a href={api.downloadUrl(node.id)}>{node.name}</a>
-                )}
-              </td>
-              <td>{formatDate(node.modifiedAt)}</td>
-              <td>{node.isFile ? formatBytes(node.sizeInBytes) : '—'}</td>
-              <td>
-                <button className="ghost danger" onClick={() => handleDelete(node)}>
-                  Delete
-                </button>
-              </td>
-            </tr>
-          ))}
-          {displayedNodes.length === 0 && !loading && (
-            <tr>
-              <td colSpan={5} className="empty">
-                No documents here yet.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+      <FileTable
+        nodes={displayedNodes}
+        loading={loading}
+        selected={selected}
+        isSearchView={!!searchResults}
+        searchQuery={searchQuery}
+        onToggleSelected={toggleSelected}
+        onOpenFolder={openFolder}
+        onPreview={setPreviewNode}
+        onDelete={handleDelete}
+        onDropFiles={uploadFiles}
+      />
+
+      {previewNode && <PreviewModal node={previewNode} onClose={() => setPreviewNode(null)} />}
 
       {mergeableSelectedCount > 0 && (
-        <div className="merge-bar">
-          <span>{mergeableSelectedCount} file(s) selected</span>
-          <input
-            value={mergeFileName}
-            onChange={(e) => setMergeFileName(e.target.value)}
-            placeholder="merged-document"
-          />
-          <button
-            onClick={handleMerge}
-            disabled={mergeableSelectedCount < 2 || merging || !!searchResults}
-            title={mergeableSelectedCount < 2 ? 'Select at least 2 files' : ''}
-          >
-            {merging ? 'Merging…' : `Merge into one PDF`}
-          </button>
-        </div>
+        <MergeBar
+          selectedCount={mergeableSelectedCount}
+          fileName={mergeFileName}
+          merging={merging}
+          disabled={!!searchResults}
+          onFileNameChange={setMergeFileName}
+          onMerge={handleMerge}
+        />
       )}
     </div>
   )

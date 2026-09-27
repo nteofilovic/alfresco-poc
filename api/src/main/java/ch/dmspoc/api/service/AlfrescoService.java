@@ -2,18 +2,22 @@ package ch.dmspoc.api.service;
 
 import ch.dmspoc.api.dto.NodeDto;
 import ch.dmspoc.api.dto.SiteDto;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import ch.dmspoc.api.exception.AlfrescoApiException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.stream.StreamSupport;
 
 /** Maps Alfresco's raw REST JSON onto this app's DTOs, and hosts the business logic that isn't a 1:1 API call. */
@@ -123,6 +127,56 @@ public class AlfrescoService {
             }
         }
         return client.createFolder(parentId, name).path("entry").path("id").asText();
+    }
+
+    // ---------------------------------------------------------------- preview
+
+    public record PreviewResult(byte[] content, String mimeType) {
+    }
+
+    /**
+     * Formats Alfresco's Transform Service can render to PDF via the "pdf" rendition - the same
+     * mechanism {@link #fetchForMerge} uses. Anything not in here or in the natively-previewable
+     * set (PDF, images) gets no preview, same as Alfresco Share falling back to a generic icon.
+     */
+    private static final Set<String> OFFICE_PREVIEWABLE_MIME_TYPES = Set.of(
+            "application/msword",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.ms-excel",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.ms-powerpoint",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "application/vnd.oasis.opendocument.text",
+            "application/vnd.oasis.opendocument.spreadsheet",
+            "application/vnd.oasis.opendocument.presentation",
+            "application/rtf",
+            "text/plain",
+            "text/csv"
+    );
+
+    /** Empty means "no preview available for this file type", not an error - the UI falls back to an icon + download. */
+    public Optional<PreviewResult> getPreview(String nodeId) {
+        JsonNode entry = client.getNode(nodeId, null).path("entry");
+        String mimeType = entry.path("content").path("mimeType").asText(null);
+        if (mimeType == null) {
+            return Optional.empty();
+        }
+
+        if ("application/pdf".equals(mimeType) || mimeType.startsWith("image/")) {
+            return Optional.of(new PreviewResult(client.getContent(nodeId), mimeType));
+        }
+
+        if (OFFICE_PREVIEWABLE_MIME_TYPES.contains(mimeType)) {
+            try {
+                client.requestRendition(nodeId, "pdf");
+                byte[] pdfBytes = client.waitForRenditionContent(nodeId, "pdf", Duration.ofSeconds(30));
+                return Optional.of(new PreviewResult(pdfBytes, "application/pdf"));
+            } catch (AlfrescoApiException e) {
+                return Optional.empty();
+            }
+        }
+
+        return Optional.empty();
     }
 
     // ------------------------------------------------------------------ merge

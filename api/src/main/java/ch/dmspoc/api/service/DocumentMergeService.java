@@ -44,7 +44,7 @@ public class DocumentMergeService {
                 if (doc.mimeType().startsWith("image/")) {
                     appendImagePage(output, doc);
                 } else {
-                    appendPdfPages(output, doc);
+                    appendPdfPages(output, merger, doc);
                 }
             }
 
@@ -56,11 +56,16 @@ public class DocumentMergeService {
         }
     }
 
-    private void appendPdfPages(PDDocument output, SourceDocument doc) throws IOException {
+    /**
+     * Uses PDFMergerUtility.appendDocument() rather than a manual output.importPage() loop:
+     * appendDocument deep-clones the source's pages (and their resources, e.g. image XObjects)
+     * into the destination document immediately, so it's safe to close the source right after.
+     * A plain importPage() only copies references, which go stale once the source is closed -
+     * that silently produced blank pages for anything beyond trivial text content.
+     */
+    private void appendPdfPages(PDDocument output, PDFMergerUtility merger, SourceDocument doc) throws IOException {
         try (PDDocument source = Loader.loadPDF(doc.bytes())) {
-            for (PDPage page : source.getPages()) {
-                output.importPage(page);
-            }
+            merger.appendDocument(output, source);
         }
     }
 

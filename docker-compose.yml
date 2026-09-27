@@ -7,14 +7,16 @@ version: "3.8"
 
 services:
   postgres:
-    image: postgres:15
+    image: postgres:18
     environment:
       POSTGRES_DB: alfresco
       POSTGRES_USER: alfresco
       POSTGRES_PASSWORD: alfresco
     command: postgres -c max_connections=300 -c log_min_messages=LOG
     volumes:
-      - pg-data:/var/lib/postgresql/data
+      # postgres:18+ versions its PGDATA under /var/lib/postgresql/<major> instead of
+      # .../data directly, so the volume now needs to be mounted one level up.
+      - pg-data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U alfresco"]
       interval: 5s
@@ -22,7 +24,7 @@ services:
       retries: 20
 
   activemq:
-    image: alfresco/alfresco-activemq:5.18-jre17-rockylinux8
+    image: alfresco/alfresco-activemq:5.19.11-jre17-rockylinux8
     ports:
       - "8161:8161" # web console
 

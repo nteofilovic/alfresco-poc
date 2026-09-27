@@ -71,6 +71,22 @@ public class NodeController {
                 .body(new ByteArrayResource(content));
     }
 
+    /**
+     * Renders inline (not "attachment") so the browser can display it in an &lt;iframe&gt;/&lt;img&gt;
+     * instead of downloading it, similar to Alfresco Share's document preview. Returns 204 when the
+     * file type has no preview (see {@link AlfrescoService#getPreview}); the frontend falls back to
+     * a plain download prompt in that case.
+     */
+    @GetMapping("/{nodeId}/preview")
+    public ResponseEntity<?> preview(@PathVariable String nodeId) {
+        return alfrescoService.getPreview(nodeId)
+                .map(p -> ResponseEntity.ok()
+                        .contentType(MediaType.parseMediaType(p.mimeType()))
+                        .header(HttpHeaders.CONTENT_DISPOSITION, "inline")
+                        .body(new ByteArrayResource(p.content())))
+                .orElseGet(() -> ResponseEntity.noContent().build());
+    }
+
     @DeleteMapping("/{nodeId}")
     public ResponseEntity<Void> deleteNode(@PathVariable String nodeId,
                                             @RequestParam(defaultValue = "false") boolean permanent) {

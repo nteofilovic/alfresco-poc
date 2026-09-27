@@ -1,6 +1,9 @@
 package ch.dmspoc.api.config;
 
+import org.apache.hc.client5.http.config.ConnectionConfig;
 import org.apache.hc.client5.http.impl.classic.HttpClients;
+import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManagerBuilder;
+import org.apache.hc.core5.util.Timeout;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.client.HttpComponentsClientHttpRequestFactory;
@@ -37,8 +40,9 @@ public class RestClientConfig {
      */
     @Bean
     public RestClient alfrescoAuthProbeRestClient(AlfrescoProperties props) {
-        var requestFactory = new HttpComponentsClientHttpRequestFactory(HttpClients.createDefault());
-        requestFactory.setConnectTimeout(10_000);
+        var requestFactory = new HttpComponentsClientHttpRequestFactory(HttpClients.custom()
+                .setConnectionManager(connectionManagerWithTimeout())
+                .build());
         return RestClient.builder()
                 .baseUrl(props.baseUrl() + "/alfresco/api/-default-/public/alfresco/versions/1")
                 .requestFactory(requestFactory)
@@ -49,11 +53,25 @@ public class RestClientConfig {
         String basicAuth = "Basic " + Base64.getEncoder().encodeToString(
                 (props.username() + ":" + props.password()).getBytes(StandardCharsets.UTF_8));
 
-        var requestFactory = new HttpComponentsClientHttpRequestFactory(HttpClients.createDefault());
-        requestFactory.setConnectTimeout(10_000);
+        var requestFactory = new HttpComponentsClientHttpRequestFactory(HttpClients.custom()
+                .setConnectionManager(connectionManagerWithTimeout())
+                .build());
 
         return RestClient.builder()
                 .defaultHeader("Authorization", basicAuth)
                 .requestFactory(requestFactory);
+    }
+
+    /**
+     * HttpComponentsClientHttpRequestFactory.setConnectTimeout(int) was removed in Spring
+     * Framework 7 - the connect timeout is now configured on the Apache HttpClient's own
+     * connection manager instead.
+     */
+    private static org.apache.hc.client5.http.io.HttpClientConnectionManager connectionManagerWithTimeout() {
+        return PoolingHttpClientConnectionManagerBuilder.create()
+                .setDefaultConnectionConfig(ConnectionConfig.custom()
+                        .setConnectTimeout(Timeout.ofSeconds(10))
+                        .build())
+                .build();
     }
 }
