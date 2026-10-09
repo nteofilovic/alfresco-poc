@@ -176,6 +176,30 @@ public class AlfrescoClient {
                 .body(JsonNode.class);
     }
 
+    /** Files only (TYPE:"cm:content"), newest-modified first - backs the dashboard's "Recent documents" list. */
+    public JsonNode recentFiles(int maxItems) {
+        ObjectNode body = mapper.createObjectNode();
+        ObjectNode query = body.putObject("query");
+        query.put("query", "TYPE:\"cm:content\"");
+        query.put("language", "afts");
+        ObjectNode sortEntry = mapper.createObjectNode();
+        sortEntry.put("type", "FIELD");
+        sortEntry.put("field", "cm:modified");
+        sortEntry.put("ascending", false);
+        body.putArray("sort").add(sortEntry);
+        ObjectNode paging = body.putObject("paging");
+        paging.put("maxItems", maxItems);
+        paging.put("skipCount", 0);
+
+        return search.post()
+                .uri("/search")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .onStatus(HttpStatusCode::isError, this::handleError)
+                .body(JsonNode.class);
+    }
+
     // --------------------------------------------------------------- helpers
 
     private JsonNode get(String path, Map<String, Object> queryParams) {

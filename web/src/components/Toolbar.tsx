@@ -25,7 +25,7 @@ export function Toolbar({ fileInputRef, disabled, refreshing, onUpload, onNewFol
       </button>
       <button
         type="button"
-        className="btn btn-secondary"
+        className="btn btn-ghost toolbar-refresh"
         onClick={onRefresh}
         aria-label="Refresh"
         disabled={refreshing}

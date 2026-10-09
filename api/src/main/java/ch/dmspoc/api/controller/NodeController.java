@@ -49,6 +49,12 @@ public class NodeController {
         return alfrescoService.listChildren(props.defaultParentId(), skip, maxItems);
     }
 
+    /** Files only, newest-modified first - backs the dashboard's "Recent documents" list. */
+    @GetMapping("/recent")
+    public List<NodeDto> recentDocuments(@RequestParam(defaultValue = "20") int maxItems) {
+        return alfrescoService.recentDocuments(maxItems);
+    }
+
     @PostMapping("/{parentId}/folders")
     public NodeDto createFolder(@PathVariable String parentId, @Valid @RequestBody CreateFolderRequest request) {
         return alfrescoService.createFolder(parentId, request.name());

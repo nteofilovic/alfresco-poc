@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
-import { AlertCircle, Files, Lock, User } from 'lucide-react'
+import { AlertCircle, Lock, User } from 'lucide-react'
 import { api } from './api'
 import { Spinner } from './components/Spinner'
 
@@ -30,16 +30,13 @@ export function LoginForm({ onLoggedIn }: Props) {
 
   return (
     <div className="login-screen">
+      <div className="login-brand">
+        <h1>Zapis</h1>
+        <p className="login-subtitle">File, find and merge your documents in one place.</p>
+      </div>
+
       <div className="login-card">
-        <div className="login-brand">
-          <span className="login-brand-mark">
-            <Files size={26} aria-hidden="true" />
-          </span>
-          <div>
-            <h1>Document Workspace</h1>
-            <p className="login-subtitle">Sign in with your Alfresco account</p>
-          </div>
-        </div>
+        <h2 className="login-title">Sign in</h2>
 
         <form className="login-form" onSubmit={handleSubmit}>
           <label htmlFor="login-username">Username</label>

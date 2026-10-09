@@ -80,6 +80,9 @@ export const api = {
   search: (q: string) =>
     fetch(`/api/search?q=${encodeURIComponent(q)}`, { credentials: 'include' }).then((r) => handle<NodeDto[]>(r)),
 
+  recentDocuments: (maxItems = 20) =>
+    fetch(`/api/nodes/recent?maxItems=${maxItems}`, { credentials: 'include' }).then((r) => handle<NodeDto[]>(r)),
+
   merge: (nodeIds: string[], targetParentId: string, fileName: string) =>
     fetch('/api/merge', {
       method: 'POST',

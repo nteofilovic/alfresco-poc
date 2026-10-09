@@ -88,6 +88,13 @@ public class AlfrescoService {
                 .toList();
     }
 
+    public List<NodeDto> recentDocuments(int maxItems) {
+        JsonNode entries = client.recentFiles(maxItems).path("list").path("entries");
+        return StreamSupport.stream(entries.spliterator(), false)
+                .map(e -> toNodeDto(e.path("entry")))
+                .toList();
+    }
+
     // ------------------------------------------------------------------ sites
 
     public SiteDto createSiteWithTemplate(String id, String title, String description, String visibility,
