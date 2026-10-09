@@ -1,11 +1,11 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { AlertCircle, Lock, User } from 'lucide-react'
-import { api } from './api'
+import { api, type AuthUser } from './api'
 import { Spinner } from './components/Spinner'
 
 interface Props {
-  onLoggedIn: (username: string) => void
+  onLoggedIn: (user: AuthUser) => void
 }
 
 export function LoginForm({ onLoggedIn }: Props) {
@@ -20,7 +20,7 @@ export function LoginForm({ onLoggedIn }: Props) {
     setError(null)
     try {
       const user = await api.login(username, password)
-      onLoggedIn(user.username)
+      onLoggedIn(user)
     } catch {
       setError('Invalid username or password.')
     } finally {

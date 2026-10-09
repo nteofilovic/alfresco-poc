@@ -430,6 +430,12 @@ button.tab.tab-current:hover {
   margin-left: auto;
 }
 
+.admin-placeholder {
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--muted);
+}
+
 /* ---------- Dashboard ---------- */
 
 .dashboard {

@@ -27,6 +27,8 @@ public class CorsConfig {
                 registry.addInterceptor(new AuthInterceptor())
                         .addPathPatterns("/api/**")
                         .excludePathPatterns("/api/auth/**");
+                registry.addInterceptor(new AdminInterceptor())
+                        .addPathPatterns("/api/admin/**");
             }
         };
     }

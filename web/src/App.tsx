@@ -7,6 +7,7 @@ import { Breadcrumbs } from './components/Breadcrumbs'
 import { Toolbar } from './components/Toolbar'
 import { FileTable } from './components/FileTable'
 import { Dashboard } from './components/Dashboard'
+import { AdministrationPage } from './components/AdministrationPage'
 import { PreviewModal } from './components/PreviewModal'
 import { MergeBar } from './components/MergeBar'
 import { ErrorToast } from './components/ErrorToast'
@@ -18,11 +19,14 @@ interface Crumb {
   name: string
 }
 
+type View = 'dashboard' | 'browse' | 'admin'
+
 const ROOT: Crumb = { id: '-my-', name: 'Home' }
 
 function App() {
   const [authChecked, setAuthChecked] = useState(false)
   const [username, setUsername] = useState<string | null>(null)
+  const [isAdmin, setIsAdmin] = useState(false)
   const [breadcrumb, setBreadcrumb] = useState<Crumb[]>([ROOT])
   const [nodes, setNodes] = useState<NodeDto[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -33,7 +37,7 @@ function App() {
   const [mergeFileName, setMergeFileName] = useState('merged-document')
   const [merging, setMerging] = useState(false)
   const [previewNode, setPreviewNode] = useState<NodeDto | null>(null)
-  const [view, setView] = useState<'dashboard' | 'browse'>('dashboard')
+  const [view, setView] = useState<View>('dashboard')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const currentFolder = breadcrumb[breadcrumb.length - 1]
@@ -55,7 +59,10 @@ function App() {
   useEffect(() => {
     api
       .me()
-      .then((user) => setUsername(user.username))
+      .then((user) => {
+        setUsername(user.username)
+        setIsAdmin(user.isAdmin)
+      })
       .catch(() => setUsername(null))
       .finally(() => setAuthChecked(true))
   }, [])
@@ -64,14 +71,21 @@ function App() {
     if (username && view === 'browse') loadFolder(currentFolder.id)
   }, [username, currentFolder.id, loadFolder, view])
 
-  function handleNavigate(next: 'dashboard' | 'browse') {
+  function handleNavigate(next: View) {
+    if (next === 'admin' && !isAdmin) return
     setSearchResults(null)
     setView(next)
+  }
+
+  function handleLoggedIn(user: { username: string; isAdmin: boolean }) {
+    setUsername(user.username)
+    setIsAdmin(user.isAdmin)
   }
 
   async function handleLogout() {
     await api.logout()
     setUsername(null)
+    setIsAdmin(false)
     setBreadcrumb([ROOT])
     setSearchResults(null)
     setView('dashboard')
@@ -200,25 +214,29 @@ function App() {
   }
 
   if (!username) {
-    return <LoginForm onLoggedIn={setUsername} />
+    return <LoginForm onLoggedIn={handleLoggedIn} />
   }
 
   return (
     <div className="shell">
-      <Topbar username={username} view={view} onNavigate={handleNavigate} onLogout={handleLogout} />
+      <Topbar username={username} isAdmin={isAdmin} view={view} onNavigate={handleNavigate} onLogout={handleLogout} />
 
       <main className="main">
-        <SearchBar
-          searchQuery={searchQuery}
-          hasSearchResults={!!searchResults}
-          onSearchQueryChange={setSearchQuery}
-          onSearchSubmit={handleSearch}
-          onClearSearch={() => setSearchResults(null)}
-        />
+        {view !== 'admin' && (
+          <SearchBar
+            searchQuery={searchQuery}
+            hasSearchResults={!!searchResults}
+            onSearchQueryChange={setSearchQuery}
+            onSearchSubmit={handleSearch}
+            onClearSearch={() => setSearchResults(null)}
+          />
+        )}
 
         {error && <ErrorToast message={error} onDismiss={() => setError(null)} />}
 
-        {view === 'dashboard' ? (
+        {view === 'admin' ? (
+          isAdmin ? <AdministrationPage /> : null
+        ) : view === 'dashboard' ? (
           <Dashboard
             username={username}
             onNewFolder={() => handleNewFolderIn(ROOT.id)}

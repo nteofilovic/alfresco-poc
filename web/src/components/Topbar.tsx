@@ -1,16 +1,17 @@
-import { FolderOpen, LayoutDashboard, LogOut, Search, X } from 'lucide-react'
+import { FolderOpen, LayoutDashboard, LogOut, Search, Settings, X } from 'lucide-react'
 import type { FormEvent } from 'react'
 
-type View = 'dashboard' | 'browse'
+type View = 'dashboard' | 'browse' | 'admin'
 
 interface RailProps {
   username: string
+  isAdmin: boolean
   view: View
   onNavigate: (view: View) => void
   onLogout: () => void
 }
 
-export function Topbar({ username, view, onNavigate, onLogout }: RailProps) {
+export function Topbar({ username, isAdmin, view, onNavigate, onLogout }: RailProps) {
   return (
     <aside className="rail">
       <div className="rail-brand">Zapis</div>
@@ -33,6 +34,17 @@ export function Topbar({ username, view, onNavigate, onLogout }: RailProps) {
           <FolderOpen size={17} aria-hidden="true" />
           Documents
         </button>
+        {isAdmin && (
+          <button
+            type="button"
+            className={`rail-link${view === 'admin' ? ' active' : ''}`}
+            aria-current={view === 'admin' ? 'page' : undefined}
+            onClick={() => onNavigate('admin')}
+          >
+            <Settings size={17} aria-hidden="true" />
+            Administration
+          </button>
+        )}
       </nav>
       <div className="rail-user">
         <span className="rail-username" title={username}>
