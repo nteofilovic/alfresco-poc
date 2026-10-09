@@ -2,10 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 import { api, type NodeDto } from './api'
 import { LoginForm } from './LoginForm'
-import { Topbar } from './components/Topbar'
+import { SearchBar, Topbar } from './components/Topbar'
 import { Breadcrumbs } from './components/Breadcrumbs'
 import { Toolbar } from './components/Toolbar'
 import { FileTable } from './components/FileTable'
+import { Dashboard } from './components/Dashboard'
 import { PreviewModal } from './components/PreviewModal'
 import { MergeBar } from './components/MergeBar'
 import { ErrorToast } from './components/ErrorToast'
@@ -32,6 +33,7 @@ function App() {
   const [mergeFileName, setMergeFileName] = useState('merged-document')
   const [merging, setMerging] = useState(false)
   const [previewNode, setPreviewNode] = useState<NodeDto | null>(null)
+  const [view, setView] = useState<'dashboard' | 'browse'>('dashboard')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const currentFolder = breadcrumb[breadcrumb.length - 1]
@@ -59,14 +61,20 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if (username) loadFolder(currentFolder.id)
-  }, [username, currentFolder.id, loadFolder])
+    if (username && view === 'browse') loadFolder(currentFolder.id)
+  }, [username, currentFolder.id, loadFolder, view])
+
+  function handleNavigate(next: 'dashboard' | 'browse') {
+    setSearchResults(null)
+    setView(next)
+  }
 
   async function handleLogout() {
     await api.logout()
     setUsername(null)
     setBreadcrumb([ROOT])
     setSearchResults(null)
+    setView('dashboard')
   }
 
   function openFolder(node: NodeDto) {
@@ -88,16 +96,16 @@ function App() {
     })
   }
 
-  const uploadFiles = useCallback(
-    async (files: File[]) => {
+  const uploadFilesTo = useCallback(
+    async (parentId: string, files: File[]) => {
       if (files.length === 0) return
       setLoading(true)
       setError(null)
       try {
         for (const file of files) {
-          await api.uploadFile(currentFolder.id, file)
+          await api.uploadFile(parentId, file)
         }
-        await loadFolder(currentFolder.id)
+        if (parentId === currentFolder.id) await loadFolder(currentFolder.id)
       } catch (err) {
         setError(String(err))
       } finally {
@@ -107,6 +115,8 @@ function App() {
     [currentFolder.id, loadFolder],
   )
 
+  const uploadFiles = useCallback((files: File[]) => uploadFilesTo(currentFolder.id, files), [uploadFilesTo, currentFolder.id])
+
   async function handleUploadInput(e: ChangeEvent<HTMLInputElement>) {
     const files = e.target.files
     if (!files || files.length === 0) return
@@ -114,19 +124,24 @@ function App() {
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
-  async function handleNewFolder() {
-    const name = window.prompt('Folder name')
-    if (!name) return
-    setLoading(true)
-    try {
-      await api.createFolder(currentFolder.id, name)
-      await loadFolder(currentFolder.id)
-    } catch (err) {
-      setError(String(err))
-    } finally {
-      setLoading(false)
-    }
-  }
+  const handleNewFolderIn = useCallback(
+    async (parentId: string) => {
+      const name = window.prompt('Folder name')
+      if (!name) return
+      setLoading(true)
+      try {
+        await api.createFolder(parentId, name)
+        if (parentId === currentFolder.id) await loadFolder(currentFolder.id)
+      } catch (err) {
+        setError(String(err))
+      } finally {
+        setLoading(false)
+      }
+    },
+    [currentFolder.id, loadFolder],
+  )
+
+  const handleNewFolder = useCallback(() => handleNewFolderIn(currentFolder.id), [handleNewFolderIn, currentFolder.id])
 
   async function handleDelete(node: NodeDto) {
     if (!window.confirm(`Delete "${node.name}"?`)) return
@@ -148,6 +163,7 @@ function App() {
     setError(null)
     try {
       setSearchResults(await api.search(searchQuery))
+      setView('browse')
     } catch (err) {
       setError(String(err))
     } finally {
@@ -188,50 +204,66 @@ function App() {
   }
 
   return (
-    <div className="app">
-      <Topbar
-        username={username}
-        searchQuery={searchQuery}
-        hasSearchResults={!!searchResults}
-        onSearchQueryChange={setSearchQuery}
-        onSearchSubmit={handleSearch}
-        onClearSearch={() => setSearchResults(null)}
-        onLogout={handleLogout}
-      />
+    <div className="shell">
+      <Topbar username={username} view={view} onNavigate={handleNavigate} onLogout={handleLogout} />
 
-      <Breadcrumbs
-        breadcrumb={breadcrumb}
-        searchResults={searchResults ? { query: searchQuery, count: searchResults.length } : null}
-        onNavigate={goToBreadcrumb}
-      />
+      <main className="main">
+        <SearchBar
+          searchQuery={searchQuery}
+          hasSearchResults={!!searchResults}
+          onSearchQueryChange={setSearchQuery}
+          onSearchSubmit={handleSearch}
+          onClearSearch={() => setSearchResults(null)}
+        />
 
-      <Toolbar
-        fileInputRef={fileInputRef}
-        disabled={!!searchResults}
-        refreshing={loading}
-        onUpload={handleUploadInput}
-        onNewFolder={handleNewFolder}
-        onRefresh={() => loadFolder(currentFolder.id)}
-      />
+        {error && <ErrorToast message={error} onDismiss={() => setError(null)} />}
 
-      {error && <ErrorToast message={error} onDismiss={() => setError(null)} />}
+        {view === 'dashboard' ? (
+          <Dashboard
+            username={username}
+            onNewFolder={() => handleNewFolderIn(ROOT.id)}
+            onPreview={setPreviewNode}
+            onBrowseAll={() => handleNavigate('browse')}
+            onError={setError}
+          />
+        ) : (
+          <section className="folder">
+            <Breadcrumbs
+              breadcrumb={breadcrumb}
+              searchResults={searchResults ? { query: searchQuery, count: searchResults.length } : null}
+              onNavigate={goToBreadcrumb}
+            />
 
-      <FileTable
-        nodes={displayedNodes}
-        loading={loading}
-        selected={selected}
-        isSearchView={!!searchResults}
-        searchQuery={searchQuery}
-        onToggleSelected={toggleSelected}
-        onOpenFolder={openFolder}
-        onPreview={setPreviewNode}
-        onDelete={handleDelete}
-        onDropFiles={uploadFiles}
-      />
+            <div className="sheet">
+              <Toolbar
+                fileInputRef={fileInputRef}
+                disabled={!!searchResults}
+                refreshing={loading}
+                onUpload={handleUploadInput}
+                onNewFolder={handleNewFolder}
+                onRefresh={() => loadFolder(currentFolder.id)}
+              />
+
+              <FileTable
+                nodes={displayedNodes}
+                loading={loading}
+                selected={selected}
+                isSearchView={!!searchResults}
+                searchQuery={searchQuery}
+                onToggleSelected={toggleSelected}
+                onOpenFolder={openFolder}
+                onPreview={setPreviewNode}
+                onDelete={handleDelete}
+                onDropFiles={uploadFiles}
+              />
+            </div>
+          </section>
+        )}
+      </main>
 
       {previewNode && <PreviewModal node={previewNode} onClose={() => setPreviewNode(null)} />}
 
-      {mergeableSelectedCount > 0 && (
+      {view === 'browse' && mergeableSelectedCount > 0 && (
         <MergeBar
           selectedCount={mergeableSelectedCount}
           fileName={mergeFileName}
