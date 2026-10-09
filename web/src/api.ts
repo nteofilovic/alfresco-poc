@@ -28,6 +28,7 @@ async function handle<T>(res: Response): Promise<T> {
 export interface AuthUser {
   username: string
   isAdmin: boolean
+  firstName: string
 }
 
 export const api = {

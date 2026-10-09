@@ -11,14 +11,14 @@ import { Spinner } from './Spinner'
 const HOME_FOLDER_ID = '-my-'
 
 interface Props {
-  username: string
+  firstName: string
   onNewFolder: () => void
   onPreview: (node: NodeDto) => void
   onBrowseAll: () => void
   onError: (message: string) => void
 }
 
-export function Dashboard({ username, onNewFolder, onPreview, onBrowseAll, onError }: Props) {
+export function Dashboard({ firstName, onNewFolder, onPreview, onBrowseAll, onError }: Props) {
   const [recentDocs, setRecentDocs] = useState<NodeDto[]>([])
   const [loading, setLoading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -60,7 +60,7 @@ export function Dashboard({ username, onNewFolder, onPreview, onBrowseAll, onErr
   return (
     <div className="dashboard">
       <div className="dashboard-welcome">
-        <h2>Welcome back, {username}</h2>
+        <h2>Hello, {firstName}</h2>
         <p>Pick up where you left off, or add something new.</p>
       </div>
 

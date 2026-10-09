@@ -27,6 +27,7 @@ public class AuthController {
 
     public static final String SESSION_USER_ATTR = "authUser";
     public static final String SESSION_ADMIN_ATTR = "authIsAdmin";
+    public static final String SESSION_FIRSTNAME_ATTR = "authFirstName";
 
     private final RestClient alfrescoAuthProbeRestClient;
 
@@ -40,13 +41,16 @@ public class AuthController {
                 (request.username() + ":" + request.password()).getBytes(StandardCharsets.UTF_8));
 
         boolean isAdmin;
+        String firstName;
         try {
             JsonNode person = alfrescoAuthProbeRestClient.get()
                     .uri("/people/-me-?include=capabilities")
                     .header(HttpHeaders.AUTHORIZATION, basicAuth)
                     .retrieve()
                     .body(JsonNode.class);
-            isAdmin = person != null && person.path("entry").path("capabilities").path("isAdmin").asBoolean(false);
+            JsonNode entry = person != null ? person.path("entry") : null;
+            isAdmin = entry != null && entry.path("capabilities").path("isAdmin").asBoolean(false);
+            firstName = entry != null ? entry.path("firstName").asText(request.username()) : request.username();
         } catch (RestClientResponseException e) {
             return ResponseEntity.status(401).body(Map.of("message", "Invalid username or password"));
         }
@@ -54,7 +58,8 @@ public class AuthController {
         HttpSession session = httpRequest.getSession(true);
         session.setAttribute(SESSION_USER_ATTR, request.username());
         session.setAttribute(SESSION_ADMIN_ATTR, isAdmin);
-        return ResponseEntity.ok(Map.of("username", request.username(), "isAdmin", isAdmin));
+        session.setAttribute(SESSION_FIRSTNAME_ATTR, firstName);
+        return ResponseEntity.ok(Map.of("username", request.username(), "isAdmin", isAdmin, "firstName", firstName));
     }
 
     @PostMapping("/logout")
@@ -74,6 +79,7 @@ public class AuthController {
             return ResponseEntity.status(401).body(Map.of("message", "Not logged in"));
         }
         boolean isAdmin = Boolean.TRUE.equals(session.getAttribute(SESSION_ADMIN_ATTR));
-        return ResponseEntity.ok(Map.of("username", username, "isAdmin", isAdmin));
+        Object firstName = session.getAttribute(SESSION_FIRSTNAME_ATTR);
+        return ResponseEntity.ok(Map.of("username", username, "isAdmin", isAdmin, "firstName", firstName != null ? firstName : username));
     }
 }

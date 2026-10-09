@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
-import { api, type NodeDto } from './api'
+import { api, type AuthUser, type NodeDto } from './api'
 import { LoginForm } from './LoginForm'
 import { SearchBar, Topbar } from './components/Topbar'
 import { Breadcrumbs } from './components/Breadcrumbs'
@@ -26,6 +26,7 @@ const ROOT: Crumb = { id: '-my-', name: 'Home' }
 function App() {
   const [authChecked, setAuthChecked] = useState(false)
   const [username, setUsername] = useState<string | null>(null)
+  const [firstName, setFirstName] = useState<string | null>(null)
   const [isAdmin, setIsAdmin] = useState(false)
   const [breadcrumb, setBreadcrumb] = useState<Crumb[]>([ROOT])
   const [nodes, setNodes] = useState<NodeDto[]>([])
@@ -61,6 +62,7 @@ function App() {
       .me()
       .then((user) => {
         setUsername(user.username)
+        setFirstName(user.firstName)
         setIsAdmin(user.isAdmin)
       })
       .catch(() => setUsername(null))
@@ -77,14 +79,16 @@ function App() {
     setView(next)
   }
 
-  function handleLoggedIn(user: { username: string; isAdmin: boolean }) {
+  function handleLoggedIn(user: AuthUser) {
     setUsername(user.username)
+    setFirstName(user.firstName)
     setIsAdmin(user.isAdmin)
   }
 
   async function handleLogout() {
     await api.logout()
     setUsername(null)
+    setFirstName(null)
     setIsAdmin(false)
     setBreadcrumb([ROOT])
     setSearchResults(null)
@@ -238,7 +242,7 @@ function App() {
           isAdmin ? <AdministrationPage /> : null
         ) : view === 'dashboard' ? (
           <Dashboard
-            username={username}
+            firstName={firstName ?? username}
             onNewFolder={() => handleNewFolderIn(ROOT.id)}
             onPreview={setPreviewNode}
             onBrowseAll={() => handleNavigate('browse')}
