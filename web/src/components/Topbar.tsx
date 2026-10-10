@@ -1,7 +1,7 @@
-import { FolderOpen, LayoutDashboard, LogOut, Search, Settings, X } from 'lucide-react'
+import { FolderOpen, LayoutDashboard, LogOut, Search, Settings, UserRound, X } from 'lucide-react'
 import type { FormEvent } from 'react'
 
-type View = 'dashboard' | 'browse' | 'admin'
+type View = 'workspace' | 'browse' | 'admin' | 'profile'
 
 interface RailProps {
   username: string
@@ -18,39 +18,52 @@ export function Topbar({ username, isAdmin, view, onNavigate, onLogout }: RailPr
       <nav className="rail-nav" aria-label="Views">
         <button
           type="button"
-          className={`rail-link${view === 'dashboard' ? ' active' : ''}`}
-          aria-current={view === 'dashboard' ? 'page' : undefined}
-          onClick={() => onNavigate('dashboard')}
+          className={`rail-link${view === 'workspace' ? ' active' : ''}`}
+          aria-current={view === 'workspace' ? 'page' : undefined}
+          onClick={() => onNavigate('workspace')}
+          title="Workspace"
         >
           <LayoutDashboard size={17} aria-hidden="true" />
-          Overview
-        </button>
-        <button
-          type="button"
-          className={`rail-link${view === 'browse' ? ' active' : ''}`}
-          aria-current={view === 'browse' ? 'page' : undefined}
-          onClick={() => onNavigate('browse')}
-        >
-          <FolderOpen size={17} aria-hidden="true" />
-          Documents
+          Workspace
         </button>
         {isAdmin && (
-          <button
-            type="button"
-            className={`rail-link${view === 'admin' ? ' active' : ''}`}
-            aria-current={view === 'admin' ? 'page' : undefined}
-            onClick={() => onNavigate('admin')}
-          >
-            <Settings size={17} aria-hidden="true" />
-            Administration
-          </button>
+          <>
+            <button
+              type="button"
+              className={`rail-link${view === 'browse' ? ' active' : ''}`}
+              aria-current={view === 'browse' ? 'page' : undefined}
+              onClick={() => onNavigate('browse')}
+              title="Documents"
+            >
+              <FolderOpen size={17} aria-hidden="true" />
+              Documents
+            </button>
+            <button
+              type="button"
+              className={`rail-link${view === 'admin' ? ' active' : ''}`}
+              aria-current={view === 'admin' ? 'page' : undefined}
+              onClick={() => onNavigate('admin')}
+              title="Administration"
+            >
+              <Settings size={17} aria-hidden="true" />
+              Administration
+            </button>
+          </>
         )}
       </nav>
       <div className="rail-user">
-        <span className="rail-username" title={username}>
-          {username}
-        </span>
-        <button type="button" className="rail-link" onClick={onLogout}>
+        <button
+          type="button"
+          className={`rail-link${view === 'profile' ? ' active' : ''}`}
+          aria-current={view === 'profile' ? 'page' : undefined}
+          onClick={() => onNavigate('profile')}
+          title={`Profile (${username})`}
+          aria-label={`Profile, signed in as ${username}`}
+        >
+          <UserRound size={16} aria-hidden="true" />
+          <span className="rail-username">{username}</span>
+        </button>
+        <button type="button" className="rail-link" onClick={onLogout} title="Sign out">
           <LogOut size={16} aria-hidden="true" />
           Sign out
         </button>

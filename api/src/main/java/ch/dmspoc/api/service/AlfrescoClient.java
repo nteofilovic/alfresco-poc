@@ -30,11 +30,14 @@ public class AlfrescoClient {
 
     private final RestClient core; // .../alfresco/versions/1
     private final RestClient search; // .../search/versions/1
+    private final RestClient service; // .../alfresco/service (legacy webscripts)
     private final ObjectMapper mapper;
 
-    public AlfrescoClient(RestClient alfrescoRestClient, RestClient alfrescoSearchRestClient, ObjectMapper mapper) {
+    public AlfrescoClient(RestClient alfrescoRestClient, RestClient alfrescoSearchRestClient,
+                          RestClient alfrescoServiceRestClient, ObjectMapper mapper) {
         this.core = alfrescoRestClient;
         this.search = alfrescoSearchRestClient;
+        this.service = alfrescoServiceRestClient;
         this.mapper = mapper;
     }
 
@@ -51,9 +54,15 @@ public class AlfrescoClient {
     }
 
     public JsonNode createFolder(String parentId, String name) {
+        return createFolder(parentId, name, null);
+    }
+
+    /** @param description stored as cm:description; used to tag admin-designed structure folders */
+    public JsonNode createFolder(String parentId, String name, String description) {
         ObjectNode body = mapper.createObjectNode();
         body.put("name", name);
         body.put("nodeType", "cm:folder");
+        if (description != null) body.putObject("properties").put("cm:description", description);
         return post("/nodes/" + enc(parentId) + "/children", body);
     }
 
@@ -80,6 +89,20 @@ public class AlfrescoClient {
                 .retrieve()
                 .onStatus(HttpStatusCode::isError, this::handleError)
                 .body(byte[].class);
+    }
+
+    public JsonNode moveNode(String nodeId, String targetParentId) {
+        return nodeAction(nodeId, "move", targetParentId);
+    }
+
+    public JsonNode copyNode(String nodeId, String targetParentId) {
+        return nodeAction(nodeId, "copy", targetParentId);
+    }
+
+    private JsonNode nodeAction(String nodeId, String action, String targetParentId) {
+        ObjectNode body = mapper.createObjectNode();
+        body.put("targetParentId", targetParentId);
+        return post("/nodes/" + enc(nodeId) + "/" + action, body);
     }
 
     public void deleteNode(String nodeId, boolean permanent) {
@@ -147,6 +170,14 @@ public class AlfrescoClient {
         return post("/sites", body);
     }
 
+    public void deleteSite(String siteId) {
+        core.delete()
+                .uri(uriBuilder -> uriBuilder.path("/sites/" + enc(siteId)).queryParam("permanent", true).build())
+                .retrieve()
+                .onStatus(HttpStatusCode::isError, this::handleError)
+                .toBodilessEntity();
+    }
+
     public JsonNode getSiteContainer(String siteId, String containerId) {
         return get("/sites/" + enc(siteId) + "/containers/" + enc(containerId), Map.of());
     }
@@ -155,14 +186,74 @@ public class AlfrescoClient {
         return get("/sites", mapOf("skipCount", skip, "maxItems", maxItems));
     }
 
+    // ---------------------------------------------------------------- people
+
+    public JsonNode createPerson(String id, String firstName, String lastName, String email, String password) {
+        ObjectNode body = mapper.createObjectNode();
+        body.put("id", id);
+        body.put("firstName", firstName);
+        if (lastName != null && !lastName.isBlank()) body.put("lastName", lastName);
+        body.put("email", email);
+        body.put("password", password);
+        body.put("enabled", true);
+        return post("/people", body);
+    }
+
+    public JsonNode getPerson(String id) {
+        return get("/people/" + enc(id), Map.of());
+    }
+
+    public JsonNode updatePerson(String id, String firstName, String lastName, String email) {
+        ObjectNode body = mapper.createObjectNode();
+        body.put("firstName", firstName);
+        body.put("lastName", lastName != null ? lastName : "");
+        body.put("email", email);
+        return put("/people/" + enc(id), body);
+    }
+
+    public JsonNode listPeople() {
+        return get("/people", mapOf("maxItems", 1000, "orderBy", "id ASC"));
+    }
+
+    public JsonNode setPersonEnabled(String id, boolean enabled) {
+        ObjectNode body = mapper.createObjectNode();
+        body.put("enabled", enabled);
+        return put("/people/" + enc(id), body);
+    }
+
+    /** The public v1 REST API has no "delete person", so this uses the legacy people webscript. */
+    public void deletePerson(String id) {
+        service.delete()
+                .uri("/api/people/" + enc(id))
+                .retrieve()
+                .onStatus(HttpStatusCode::isError, this::handleError)
+                .toBodilessEntity();
+    }
+
+    public JsonNode updatePersonPassword(String id, String newPassword) {
+        ObjectNode body = mapper.createObjectNode();
+        body.put("password", newPassword);
+        return put("/people/" + enc(id), body);
+    }
+
     // ---------------------------------------------------------------- search
 
     public JsonNode search(String term, int maxItems) {
+        return search(term, maxItems, null);
+    }
+
+    /** @param siteId when non-null, only matches inside that Share site are returned */
+    public JsonNode search(String term, int maxItems, String siteId) {
         String safeTerm = term.replace("\"", "");
         ObjectNode body = mapper.createObjectNode();
         ObjectNode query = body.putObject("query");
-        query.put("query", "(cm:name:\"*" + safeTerm + "*\" OR TEXT:\"" + safeTerm + "\")");
+        String afts = "(cm:name:\"*" + safeTerm + "*\" OR TEXT:\"" + safeTerm + "\")";
+        if (siteId != null) {
+            afts += " AND PATH:\"/app:company_home/st:sites/cm:" + siteId + "//*\"";
+        }
+        query.put("query", afts);
         query.put("language", "afts");
+        body.putArray("include").add("path"); // ancestors, so the UI can show where a hit lives
         ObjectNode paging = body.putObject("paging");
         paging.put("maxItems", maxItems);
         paging.put("skipCount", 0);
@@ -218,6 +309,16 @@ public class AlfrescoClient {
 
     private JsonNode post(String path, Object body) {
         return core.post()
+                .uri(path)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .onStatus(HttpStatusCode::isError, this::handleError)
+                .body(JsonNode.class);
+    }
+
+    private JsonNode put(String path, Object body) {
+        return core.put()
                 .uri(path)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(body)

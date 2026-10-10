@@ -61,6 +61,25 @@ public class AlfrescoService {
         }
     }
 
+    public NodeDto renameNode(String nodeId, String newName) {
+        JsonNode current = client.getNode(nodeId, "properties").path("entry");
+        if (current.path("isFolder").asBoolean(false)
+                && WorkspaceService.STRUCTURE_MARK.equals(current.path("properties").path("cm:description").asText(null))) {
+            throw new AlfrescoApiException(403, "This folder is part of the workspace structure and cannot be renamed");
+        }
+        ObjectNode body = mapper.createObjectNode();
+        body.put("name", newName.trim());
+        return toNodeDto(client.updateNode(nodeId, body).path("entry"));
+    }
+
+    public NodeDto moveNode(String nodeId, String targetParentId) {
+        return toNodeDto(client.moveNode(nodeId, targetParentId).path("entry"));
+    }
+
+    public NodeDto copyNode(String nodeId, String targetParentId) {
+        return toNodeDto(client.copyNode(nodeId, targetParentId).path("entry"));
+    }
+
     public byte[] downloadContent(String nodeId) {
         return client.getContent(nodeId);
     }
@@ -82,7 +101,11 @@ public class AlfrescoService {
     }
 
     public List<NodeDto> search(String term, int maxItems) {
-        JsonNode entries = client.search(term, maxItems).path("list").path("entries");
+        return search(term, maxItems, null);
+    }
+
+    public List<NodeDto> search(String term, int maxItems, String siteId) {
+        JsonNode entries = client.search(term, maxItems, siteId).path("list").path("entries");
         return StreamSupport.stream(entries.spliterator(), false)
                 .map(e -> toNodeDto(e.path("entry")))
                 .toList();
@@ -223,6 +246,10 @@ public class AlfrescoService {
                 ? mapper.convertValue(e.get("properties"), Map.class)
                 : Map.of();
 
+        List<NodeDto.PathElement> ancestors = new ArrayList<>();
+        e.path("path").path("elements").forEach(p ->
+                ancestors.add(new NodeDto.PathElement(p.path("id").asText(), p.path("name").asText())));
+
         return new NodeDto(
                 e.path("id").asText(),
                 e.path("name").asText(),
@@ -235,7 +262,8 @@ public class AlfrescoService {
                 parseDate(e.path("modifiedAt").asText(null)),
                 e.path("createdByUser").path("displayName").asText(null),
                 aspects,
-                properties
+                properties,
+                ancestors
         );
     }
 

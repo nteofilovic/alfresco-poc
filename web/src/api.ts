@@ -14,6 +14,8 @@ export interface NodeDto {
   createdByUser: string | null
   aspectNames: string[]
   properties: Record<string, unknown>
+  /** Root-first folder chain (id + name); only populated for search results. */
+  ancestors?: { id: string; name: string }[]
 }
 
 async function handle<T>(res: Response): Promise<T> {
@@ -29,7 +31,41 @@ export interface AuthUser {
   username: string
   firstName: string
   isAdmin: boolean
+}
+
+export interface NewUser {
+  username: string
   firstName: string
+  lastName: string
+  email: string
+  password: string
+}
+
+export interface ManagedUser {
+  username: string
+  firstName: string
+  lastName: string
+  email: string
+  enabled: boolean
+  protectedAccount: boolean
+}
+
+export interface FolderTemplateNode {
+  name: string
+  children: FolderTemplateNode[]
+}
+
+export interface Workspace {
+  exists: boolean
+  name: string
+  rootId: string | null
+}
+
+export interface Profile {
+  username: string
+  firstName: string
+  lastName: string
+  email: string
 }
 
 export const api = {
@@ -63,6 +99,30 @@ export const api = {
     fetch(`/api/nodes/${encodeURIComponent(nodeId)}`, { method: 'DELETE', credentials: 'include' }).then((r) =>
       handle<void>(r),
     ),
+
+  renameNode: (nodeId: string, name: string) =>
+    fetch(`/api/nodes/${encodeURIComponent(nodeId)}/name`, {
+      method: 'PUT',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    }).then((r) => handle<NodeDto>(r)),
+
+  moveNode: (nodeId: string, targetParentId: string) =>
+    fetch(`/api/nodes/${encodeURIComponent(nodeId)}/move`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetParentId }),
+    }).then((r) => handle<NodeDto>(r)),
+
+  copyNode: (nodeId: string, targetParentId: string) =>
+    fetch(`/api/nodes/${encodeURIComponent(nodeId)}/copy`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetParentId }),
+    }).then((r) => handle<NodeDto>(r)),
 
   downloadUrl: (nodeId: string) => `/api/nodes/${encodeURIComponent(nodeId)}/content`,
 
@@ -103,6 +163,57 @@ export const api = {
     }).then((r) => handle<AuthUser>(r)),
 
   logout: () => fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }).then((r) => handle<void>(r)),
+
+  createUser: (user: NewUser) =>
+    fetch('/api/admin/users', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(user),
+    }).then((r) => handle<ManagedUser>(r)),
+
+  getWorkspace: () => fetch('/api/workspace', { credentials: 'include' }).then((r) => handle<Workspace>(r)),
+
+  createWorkspace: (folders: FolderTemplateNode[]) =>
+    fetch('/api/admin/workspace', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folders }),
+    }).then((r) => handle<Workspace>(r)),
+
+  listUsers: () => fetch('/api/admin/users', { credentials: 'include' }).then((r) => handle<ManagedUser[]>(r)),
+
+  setUserEnabled: (username: string, enabled: boolean) =>
+    fetch(`/api/admin/users/${encodeURIComponent(username)}/enabled`, {
+      method: 'PUT',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    }).then((r) => handle<ManagedUser>(r)),
+
+  deleteUser: (username: string) =>
+    fetch(`/api/admin/users/${encodeURIComponent(username)}`, { method: 'DELETE', credentials: 'include' }).then(
+      (r) => handle<void>(r),
+    ),
+
+  getProfile: () => fetch('/api/profile', { credentials: 'include' }).then((r) => handle<Profile>(r)),
+
+  updateProfile: (profile: Pick<Profile, 'firstName' | 'lastName' | 'email'>) =>
+    fetch('/api/profile', {
+      method: 'PUT',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(profile),
+    }).then((r) => handle<Profile>(r)),
+
+  changePassword: (currentPassword: string, newPassword: string) =>
+    fetch('/api/profile/password', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ currentPassword, newPassword }),
+    }).then((r) => handle<void>(r)),
 
   me: () => fetch('/api/auth/me', { credentials: 'include' }).then((r) => handle<AuthUser>(r)),
 }
