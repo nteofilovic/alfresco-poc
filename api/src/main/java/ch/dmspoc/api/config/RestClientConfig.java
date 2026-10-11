@@ -32,6 +32,12 @@ public class RestClientConfig {
         return builder(props).baseUrl(props.baseUrl() + "/alfresco/api/-default-/public/search/versions/1").build();
     }
 
+    /** Workflow REST API (embedded Activiti): processes, tasks, items, variables. Backs the daily task list. */
+    @Bean
+    public RestClient alfrescoWorkflowRestClient(AlfrescoProperties props) {
+        return builder(props).baseUrl(props.baseUrl() + "/alfresco/api/-default-/public/workflow/versions/1").build();
+    }
+
     /** Legacy webscript root; only used for operations the public REST API lacks (deleting a person). */
     @Bean
     public RestClient alfrescoServiceRestClient(AlfrescoProperties props) {

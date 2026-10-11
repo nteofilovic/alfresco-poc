@@ -1,4 +1,13 @@
-import type { NodeDto } from './api'
+import type { NodeDto, TaskStatus } from './api'
+
+export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
+  new: 'New',
+  in_progress: 'In progress',
+  on_hold: 'On hold',
+  done: 'Done',
+}
+
+export const TASK_STATUSES = Object.keys(TASK_STATUS_LABELS) as TaskStatus[]
 
 export function formatBytes(bytes: number | null): string {
   if (bytes == null) return '—'
@@ -16,6 +25,34 @@ export function formatBytes(bytes: number | null): string {
 export function formatDate(iso: string | null): string {
   if (!iso) return '—'
   return new Date(iso).toLocaleString()
+}
+
+/** Parses a date-only string ("2026-10-15") as a local calendar day, anything else as a timestamp. */
+function parseDay(value: string): Date {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(value)
+}
+
+/** Calendar date without a time, e.g. for due dates. */
+export function formatDay(value: string | null): string {
+  if (!value) return '—'
+  const d = parseDay(value)
+  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
+/** True when the due day is before today (an open task due today is not yet overdue). */
+export function isOverdue(dueDate: string | null, now = new Date()): boolean {
+  if (!dueDate) return false
+  const due = parseDay(dueDate)
+  if (Number.isNaN(due.getTime())) return false
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  return due.getTime() < today.getTime()
+}
+
+/** Today as yyyy-MM-dd in local time, for <input type="date" min>. */
+export function todayInputValue(now = new Date()): string {
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`
 }
 
 export type FileKind = 'pdf' | 'word' | 'excel' | 'image' | 'folder' | 'file'

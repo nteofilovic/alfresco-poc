@@ -27,6 +27,11 @@ async function handle<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>
 }
 
+/** The API sends null for an empty description/message (and could for attachments); components expect strings/arrays. */
+function normalizeTask(t: TaskDto): TaskDto {
+  return { ...t, description: t.description ?? '', message: t.message ?? '', attachments: t.attachments ?? [] }
+}
+
 export interface AuthUser {
   username: string
   firstName: string
@@ -67,6 +72,59 @@ export interface Profile {
   lastName: string
   email: string
 }
+
+export type TaskStatus = 'new' | 'in_progress' | 'on_hold' | 'done'
+export type TaskScope = 'assigned' | 'created'
+
+export interface TaskAttachment {
+  id: string
+  name: string
+}
+
+export interface TaskDto {
+  id: string
+  title: string
+  description: string
+  createdAt: string
+  /** ISO date (yyyy-MM-dd) or full ISO timestamp. */
+  dueDate: string | null
+  /** Usernames. */
+  creator: string
+  assignee: string
+  status: TaskStatus
+  /** The assignee's running message to the creator. */
+  message: string
+  attachments: TaskAttachment[]
+  resolved: boolean
+}
+
+export interface NewTask {
+  title: string
+  description: string
+  dueDate: string
+  assignee: string
+  attachmentIds: string[]
+}
+
+export interface TaskNotification {
+  id: string
+  taskId: string
+  title: string
+  assignee: string
+  resolvedAt: string
+}
+
+export interface TaskAssignee {
+  username: string
+  displayName: string
+}
+
+const jsonInit = (method: string, body: unknown): RequestInit => ({
+  method,
+  credentials: 'include',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(body),
+})
 
 export const api = {
   listChildren: (nodeId: string) =>
@@ -216,4 +274,41 @@ export const api = {
     }).then((r) => handle<void>(r)),
 
   me: () => fetch('/api/auth/me', { credentials: 'include' }).then((r) => handle<AuthUser>(r)),
+
+  listTasks: (scope: TaskScope) =>
+    fetch(`/api/tasks?scope=${scope}`, { credentials: 'include' })
+      .then((r) => handle<TaskDto[]>(r))
+      .then((list) => list.map(normalizeTask)),
+
+  getTask: (id: string) =>
+    fetch(`/api/tasks/${encodeURIComponent(id)}`, { credentials: 'include' })
+      .then((r) => handle<TaskDto>(r))
+      .then(normalizeTask),
+
+  createTask: (task: NewTask) =>
+    fetch('/api/tasks', jsonInit('POST', task))
+      .then((r) => handle<TaskDto>(r))
+      .then(normalizeTask),
+
+  updateTask: (id: string, changes: { status?: TaskStatus; message?: string }) =>
+    fetch(`/api/tasks/${encodeURIComponent(id)}`, jsonInit('PUT', changes))
+      .then((r) => handle<TaskDto>(r))
+      .then(normalizeTask),
+
+  resolveTask: (id: string, message?: string) =>
+    fetch(`/api/tasks/${encodeURIComponent(id)}/resolve`, jsonInit('POST', { message }))
+      .then((r) => handle<TaskDto>(r))
+      .then(normalizeTask),
+
+  taskNotifications: () =>
+    fetch('/api/tasks/notifications', { credentials: 'include' }).then((r) => handle<TaskNotification[]>(r)),
+
+  dismissTaskNotification: (id: string) =>
+    fetch(`/api/tasks/notifications/${encodeURIComponent(id)}/dismiss`, {
+      method: 'POST',
+      credentials: 'include',
+    }).then((r) => handle<void>(r)),
+
+  taskAssignees: () =>
+    fetch('/api/tasks/assignees', { credentials: 'include' }).then((r) => handle<TaskAssignee[]>(r)),
 }

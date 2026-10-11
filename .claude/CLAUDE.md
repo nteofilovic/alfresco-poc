@@ -54,22 +54,43 @@ Three-layer separation, in call order `controller -> service (AlfrescoService) -
 - **`service/DocumentMergeService`** — PDF merge logic: converts Office formats to PDF via Alfresco's own
   Transform Service (LibreOffice-backed, called through `AlfrescoClient`), places images directly onto PDF
   pages with PDFBox. Multi-page TIFFs only contribute their first page.
-- **`controller/`** — `NodeController` (browse/upload/download/delete/metadata), `SearchController`
-  (full-text search), `MergeController` (merge-to-PDF), `SiteController` (site + folder-template creation).
-- **`config/`** — `RestClientConfig` builds the two Alfresco `RestClient`s (HTTP Basic auth against the
-  `admin` user, backed by Apache HttpClient 5); `AlfrescoProperties` is the typed `alfresco.*` config;
-  `CorsConfig` reads `app.cors.allowed-origins`.
+- **`service/WorkspaceService`** — the single "Workspace" Share site (`zapis-workspace`) whose document
+  library holds the admin-designed folder tree. `findInWorkspace(nodeId)` is how scope is checked.
+- **`controller/`** — `NodeController` (browse/upload/download/preview/rename/move/copy/delete/metadata),
+  `SearchController`, `MergeController`, `SiteController`, `AuthController` (login/logout/me),
+  `ProfileController` (own profile + password), `WorkspaceController` (`GET /api/workspace`,
+  admin `POST /api/admin/workspace`), `AdminUserController` (`/api/admin/users`).
+- **`config/`** — `RestClientConfig` builds the two Alfresco `RestClient`s (HTTP Basic auth with the
+  shared service account from `alfresco.username/password`, Apache HttpClient 5); `AlfrescoProperties`
+  is the typed `alfresco.*` config; `CorsConfig` reads `app.cors.allowed-origins` **and registers all
+  interceptors** (see below).
 - **`exception/GlobalExceptionHandler`** — translates `AlfrescoApiException` (and friends) into HTTP
   responses; this is where Alfresco error shapes get normalized for the frontend.
 - Config: `api/src/main/resources/application.yml` — Alfresco base URL/credentials, `default-parent-id`
   (`-my-` = caller's Home folder, `-root-` = repository root), multipart size limits, CORS origins.
+
+### Auth and access control (cross-cutting, spans several files)
+
+Login is `POST /api/auth/login`: credentials are validated against Alfresco, then stored as HTTP-session
+attributes (`AuthController.SESSION_*`: user, isAdmin, firstName). Every later Alfresco call is made as
+the **shared service account**, not the logged-in user — so the interceptors are the *only* authorization:
+- `AuthInterceptor` — `/api/**` except `/api/auth/**` needs a logged-in session (401).
+- `AdminInterceptor` — `/api/admin/**` needs an admin session (403).
+- `WorkspaceScopeInterceptor` — `/api/nodes/**` for non-admins: node must be inside the workspace library,
+  and non-admins cannot create/delete/rename/move/copy folders or use `/recent` / `/root/children`.
+  Controllers like `SearchController`/`MergeController` also check the admin session flag themselves.
+
+When adding an endpoint, decide which of these apply; path variables must be named `nodeId` or `parentId`
+for the scope interceptor to find them. CORS has `allowCredentials(true)` so the session cookie flows.
 
 ### Web layer (`web/src/`)
 
 Small, no router/state-library yet:
 - **`api.ts`** — typed fetch wrapper around the Spring Boot API; this is the single point of contact with
   the backend. Add new backend calls here, not ad-hoc `fetch`s in components.
-- **`App.tsx`** — the whole UI: breadcrumb folder browser, upload, search, merge-to-PDF selection.
+- **`App.tsx`** — top-level UI: login gate (`LoginForm`), breadcrumb folder browser, upload, search,
+  merge-to-PDF selection, split-view preview. Views like `AdministrationPage` (workspace builder, user
+  management) and `ProfilePage` live in `components/`.
 - **`formatters.ts`** — display formatting helpers (dates, sizes, etc.).
 - Dev server proxies `/api` to `http://localhost:8081` (see `vite.config.ts`) — components call relative
   `/api/...` paths, never the Alfresco host directly.
@@ -82,7 +103,8 @@ Local development only — Community has no official clustering/HA. Default Alfr
 
 ## POC simplifications to keep in mind
 
-- Auth is HTTP Basic against Alfresco's built-in `admin` user; there is no per-user/tenant model in the
-  Spring Boot layer.
+- The API talks to Alfresco as one shared `admin` service account; per-user identity exists only in the
+  Spring session, and workspace scoping is enforced in the API (see Auth section), not by Alfresco ACLs.
+- There is no test suite in `api/` either (no `src/test`), so `mvn test` currently runs nothing.
 - No AMPs or custom content model are installed; the metadata endpoint (`PUT /api/nodes/{id}/metadata`)
   only works with Alfresco's stock aspects (e.g. `cm:titled`) until a real content model is added.

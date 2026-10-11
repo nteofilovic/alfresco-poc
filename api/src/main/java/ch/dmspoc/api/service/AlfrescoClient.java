@@ -31,13 +31,16 @@ public class AlfrescoClient {
     private final RestClient core; // .../alfresco/versions/1
     private final RestClient search; // .../search/versions/1
     private final RestClient service; // .../alfresco/service (legacy webscripts)
+    private final RestClient workflow; // .../workflow/versions/1
     private final ObjectMapper mapper;
 
     public AlfrescoClient(RestClient alfrescoRestClient, RestClient alfrescoSearchRestClient,
-                          RestClient alfrescoServiceRestClient, ObjectMapper mapper) {
+                          RestClient alfrescoServiceRestClient, RestClient alfrescoWorkflowRestClient,
+                          ObjectMapper mapper) {
         this.core = alfrescoRestClient;
         this.search = alfrescoSearchRestClient;
         this.service = alfrescoServiceRestClient;
+        this.workflow = alfrescoWorkflowRestClient;
         this.mapper = mapper;
     }
 
@@ -117,6 +120,94 @@ public class AlfrescoClient {
     public JsonNode updateNode(String nodeId, JsonNode body) {
         return core.put()
                 .uri("/nodes/" + enc(nodeId))
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .onStatus(HttpStatusCode::isError, this::handleError)
+                .body(JsonNode.class);
+    }
+
+    // -------------------------------------------------------------- workflow
+
+    /** Starts a process by definition key (e.g. activitiAdhoc) with the given start variables. */
+    public JsonNode startProcess(String definitionKey, Map<String, Object> variables) {
+        ObjectNode body = mapper.createObjectNode();
+        body.put("processDefinitionKey", definitionKey);
+        body.set("variables", mapper.valueToTree(variables));
+        return wfPost("/processes", body);
+    }
+
+    public JsonNode getProcess(String processId) {
+        return wfGet("/processes/" + enc(processId), Map.of());
+    }
+
+    /** {@code where} uses the workflow API syntax, e.g. {@code (status='any' AND variables/x = 'd_text y')}. */
+    public JsonNode listProcesses(String where) {
+        return wfGet("/processes", mapOf("where", where, "maxItems", 1000));
+    }
+
+    public void deleteProcess(String processId) {
+        wfDelete("/processes/" + enc(processId));
+    }
+
+    /** All variables of a process; works for finished processes too (history). */
+    public JsonNode listProcessVariables(String processId) {
+        return wfGet("/processes/" + enc(processId) + "/variables", mapOf("maxItems", 1000));
+    }
+
+    /** Creates or replaces a process-scoped variable. Names must not use an unregistered "prefix_" form. */
+    public JsonNode setProcessVariable(String processId, String name, String type, Object value) {
+        ObjectNode body = mapper.createObjectNode();
+        body.put("name", name);
+        body.put("type", type);
+        body.set("value", mapper.valueToTree(value));
+        return wfPut("/processes/" + enc(processId) + "/variables/" + enc(name), body);
+    }
+
+    /** Active and finished tasks of a process ({@code /processes/{id}/tasks} would only list the active ones). */
+    public JsonNode listProcessTasks(String processId) {
+        return listTasks("(status='any' AND processId='" + processId.replace("'", "") + "')");
+    }
+
+    public JsonNode addProcessItems(String processId, java.util.List<String> nodeIds) {
+        var body = mapper.createArrayNode();
+        nodeIds.forEach(id -> body.addObject().put("id", id));
+        return wfPost("/processes/" + enc(processId) + "/items", body);
+    }
+
+    public JsonNode listProcessItems(String processId) {
+        return wfGet("/processes/" + enc(processId) + "/items", mapOf("maxItems", 1000));
+    }
+
+    /** {@code where} uses the workflow API syntax, e.g. {@code (status='any' AND assignee='bob')}. */
+    public JsonNode listTasks(String where) {
+        return wfGet("/tasks", mapOf("where", where, "maxItems", 1000));
+    }
+
+    public JsonNode getTask(String taskId) {
+        return wfGet("/tasks/" + enc(taskId), Map.of());
+    }
+
+    /** Variables of one scope ("local" or "global") of a task. */
+    public JsonNode listTaskVariables(String taskId, String scope) {
+        return wfGet("/tasks/" + enc(taskId) + "/variables", mapOf("where", "(scope='" + scope + "')", "maxItems", 1000));
+    }
+
+    public JsonNode setTaskVariable(String taskId, String name, String type, Object value, String scope) {
+        ObjectNode body = mapper.createObjectNode();
+        body.put("name", name);
+        body.put("type", type);
+        body.set("value", mapper.valueToTree(value));
+        body.put("scope", scope);
+        return wfPut("/tasks/" + enc(taskId) + "/variables/" + enc(name), body);
+    }
+
+    /** Moves a task to the given state (completed, resolved, claimed, unclaimed...). */
+    public JsonNode setTaskState(String taskId, String state) {
+        ObjectNode body = mapper.createObjectNode();
+        body.put("state", state);
+        return workflow.put()
+                .uri(uriBuilder -> uriBuilder.path("/tasks/" + enc(taskId)).queryParam("select", "state").build())
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(body)
                 .retrieve()
@@ -325,6 +416,48 @@ public class AlfrescoClient {
                 .retrieve()
                 .onStatus(HttpStatusCode::isError, this::handleError)
                 .body(JsonNode.class);
+    }
+
+    private JsonNode wfGet(String path, Map<String, Object> queryParams) {
+        return workflow.get()
+                .uri(uriBuilder -> {
+                    var b = uriBuilder.path(path);
+                    queryParams.forEach((k, v) -> {
+                        if (v != null) b.queryParam(k, v);
+                    });
+                    return b.build();
+                })
+                .retrieve()
+                .onStatus(HttpStatusCode::isError, this::handleError)
+                .body(JsonNode.class);
+    }
+
+    private JsonNode wfPost(String path, Object body) {
+        return workflow.post()
+                .uri(path)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .onStatus(HttpStatusCode::isError, this::handleError)
+                .body(JsonNode.class);
+    }
+
+    private JsonNode wfPut(String path, Object body) {
+        return workflow.put()
+                .uri(path)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .onStatus(HttpStatusCode::isError, this::handleError)
+                .body(JsonNode.class);
+    }
+
+    private void wfDelete(String path) {
+        workflow.delete()
+                .uri(path)
+                .retrieve()
+                .onStatus(HttpStatusCode::isError, this::handleError)
+                .toBodilessEntity();
     }
 
     private void handleError(org.springframework.http.HttpRequest req,

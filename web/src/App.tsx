@@ -8,6 +8,9 @@ import { Toolbar } from './components/Toolbar'
 import { FileTable } from './components/FileTable'
 import { AdministrationPage } from './components/AdministrationPage'
 import { ProfilePage } from './components/ProfilePage'
+import { TasksPage } from './components/TasksPage'
+import { ActivityPanel } from './components/ActivityPanel'
+import { useTaskActivity } from './hooks/useTaskActivity'
 import { PreviewPane, RATIO_MAX, RATIO_MIN } from './components/PreviewPane'
 import { ConfirmDialog } from './components/ConfirmDialog'
 import { MergeDialog } from './components/MergeDialog'
@@ -25,7 +28,7 @@ interface Crumb {
   name: string
 }
 
-type View = 'workspace' | 'browse' | 'admin' | 'profile'
+type View = 'workspace' | 'tasks' | 'browse' | 'admin' | 'profile'
 
 const PREVIEW_RATIO_KEY = 'zapis.previewRatio'
 
@@ -34,6 +37,7 @@ const ROOT: Crumb = { id: '-my-', name: 'Home' }
 function App() {
   const [authChecked, setAuthChecked] = useState(false)
   const [username, setUsername] = useState<string | null>(null)
+  const [firstName, setFirstName] = useState('')
   const [isAdmin, setIsAdmin] = useState(false)
   const [path, setPath] = useState<Crumb[]>([]) // folders below the current view's root
   const [rootOverride, setRootOverride] = useState<Crumb | null>(null)
@@ -53,6 +57,8 @@ function App() {
     folderId: string
     searchResults: NodeDto[] | null
   } | null>(null)
+  // A document opened from a task; it takes over the preview pane until closed or the user leaves the Workspace view.
+  const [taskPreview, setTaskPreview] = useState<NodeDto | null>(null)
   const [previewFiles, setPreviewFiles] = useState<NodeDto[]>([])
   const [previewRatio, setPreviewRatio] = useState(() => {
     const saved = Number(localStorage.getItem(PREVIEW_RATIO_KEY))
@@ -67,6 +73,12 @@ function App() {
   const [nodeToDelete, setNodeToDelete] = useState<NodeDto | null>(null)
   const [view, setView] = useState<View>('workspace')
   const fileInputRef = useRef<HTMLInputElement>(null)
+  // A task id to open when the Tasks page mounts (deep link from an activity notice).
+  const [pendingTaskId, setPendingTaskId] = useState<string | null>(null)
+  const clearPendingTask = useCallback(() => setPendingTaskId(null), [])
+  const taskActivity = useTaskActivity(username)
+  const refreshTaskActivity = taskActivity.refresh
+  const resetTaskActivity = taskActivity.reset
 
   // Admins' "Documents" view starts at their Home folder; the Workspace view starts at the workspace's document library.
   const baseRoot: Crumb | null = view === 'workspace' ? (workspace?.rootId ? { id: workspace.rootId, name: workspace.name } : null) : ROOT
@@ -94,6 +106,7 @@ function App() {
       .me()
       .then((user) => {
         setUsername(user.username)
+        setFirstName(user.firstName)
         setIsAdmin(user.isAdmin)
       })
       .catch(() => setUsername(null))
@@ -108,6 +121,11 @@ function App() {
       .catch((e) => setError(String(e)))
   }, [username])
 
+  // Refetch whenever the user moves between views so notices and the rail badge stay current (no polling).
+  useEffect(() => {
+    if (username) refreshTaskActivity()
+  }, [username, view, refreshTaskActivity])
+
   const browsing = (view === 'browse' || view === 'workspace') && root !== null
   useEffect(() => {
     if (username && browsing) loadFolder(currentFolder.id)
@@ -118,18 +136,29 @@ function App() {
     setSearchResults(null)
     setPath([])
     setRootOverride(null)
+    setTaskPreview(null)
     setView(next)
+  }
+
+  function openTasks(taskId?: string) {
+    setPendingTaskId(taskId ?? null)
+    handleNavigate('tasks')
   }
 
   function handleLoggedIn(user: AuthUser) {
     setUsername(user.username)
+    setFirstName(user.firstName)
     setIsAdmin(user.isAdmin)
   }
 
   async function handleLogout() {
     await api.logout()
     setUsername(null)
+    setFirstName('')
     setIsAdmin(false)
+    setTaskPreview(null)
+    setPendingTaskId(null)
+    resetTaskActivity()
     setPath([])
     setRootOverride(null)
     setWorkspace(null)
@@ -360,10 +389,19 @@ function App() {
     preview.searchResults === searchResults
   const previewId = previewInScope ? preview.id : null
   const previewNode = previewId ? (previewFiles.find((f) => f.id === previewId) ?? null) : null
-  const previewOpen = previewNode !== null && browsing
-  const closePreview = useCallback(() => setPreview(null), [])
+  const showingTasks = view === 'tasks'
+  const taskPreviewNode = showingTasks ? taskPreview : null
+  const paneNode = taskPreviewNode ?? (browsing ? previewNode : null)
+  const previewOpen = paneNode !== null
+  const closePreview = useCallback(() => {
+    setPreview(null)
+    setTaskPreview(null)
+  }, [])
   const selectPreview = useCallback(
-    (n: NodeDto) => setPreview({ id: n.id, view, folderId: currentFolder.id, searchResults }),
+    (n: NodeDto) => {
+      setTaskPreview(null)
+      setPreview({ id: n.id, view, folderId: currentFolder.id, searchResults })
+    },
     [view, currentFolder.id, searchResults],
   )
 
@@ -384,10 +422,10 @@ function App() {
       className={`shell${previewOpen ? ' has-preview' : ''}`}
       style={{ '--preview-ratio': previewRatio } as CSSProperties}
     >
-      <Topbar username={username} isAdmin={isAdmin} view={view} onNavigate={handleNavigate} onLogout={handleLogout} />
+      <Topbar username={username} isAdmin={isAdmin} view={view} taskBadge={taskActivity.badgeCount} onNavigate={handleNavigate} onLogout={handleLogout} />
 
       <main className="main">
-        {view !== 'admin' && view !== 'profile' && (
+        {view !== 'admin' && view !== 'profile' && view !== 'tasks' && (
           <SearchBar
             searchQuery={searchQuery}
             hasSearchResults={!!searchResults}
@@ -399,7 +437,32 @@ function App() {
 
         {error && <ErrorToast message={error} onDismiss={() => setError(null)} />}
 
-        {view === 'profile' ? (
+        {view === 'workspace' && !searchResults && (
+          <ActivityPanel
+            username={username}
+            firstName={firstName}
+            activity={taskActivity}
+            onOpenTasks={openTasks}
+            onError={setError}
+          />
+        )}
+
+        {view === 'tasks' ? (
+          <TasksPage
+            username={username}
+            assignees={taskActivity.assignees}
+            nameOf={taskActivity.nameOf}
+            pendingTaskId={pendingTaskId}
+            onPendingConsumed={clearPendingTask}
+            pickerRoot={workspace?.rootId ? { id: workspace.rootId, name: workspace.name } : null}
+            activePreviewId={taskPreviewNode?.id ?? null}
+            onPreview={(node) => {
+              setPreview(null)
+              setTaskPreview(node)
+            }}
+            onError={setError}
+          />
+        ) : view === 'profile' ? (
           <ProfilePage username={username} onProfileUpdated={() => {}} />
         ) : view === 'admin' ? (
           isAdmin ? <AdministrationPage workspace={workspace} onWorkspaceCreated={setWorkspace} /> : null
@@ -458,7 +521,7 @@ function App() {
                 getLocation={searchResults ? locationLabel : undefined}
                 onOpenLocation={(n) => openLocation(n, false)}
                 onPreview={selectPreview}
-                activeId={previewOpen ? previewId : null}
+                activeId={previewOpen && !taskPreviewNode ? previewId : null}
                 onFilesOrdered={setPreviewFiles}
                 onDelete={setNodeToDelete}
                 canDeleteFolders={isAdmin}
@@ -473,11 +536,11 @@ function App() {
         )}
       </main>
 
-      {previewOpen && previewNode && (
+      {paneNode && (
         <PreviewPane
-          key={previewNode.id}
-          node={previewNode}
-          files={previewFiles}
+          key={paneNode.id}
+          node={paneNode}
+          files={taskPreviewNode ? [taskPreviewNode] : previewFiles}
           ratio={previewRatio}
           onRatioChange={changePreviewRatio}
           expanded={previewExpanded}

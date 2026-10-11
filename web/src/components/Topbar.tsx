@@ -1,17 +1,19 @@
-import { FolderOpen, LayoutDashboard, LogOut, Search, Settings, UserRound, X } from 'lucide-react'
+import { FolderOpen, LayoutDashboard, ListChecks, LogOut, Search, Settings, UserRound, X } from 'lucide-react'
 import type { FormEvent } from 'react'
 
-type View = 'workspace' | 'browse' | 'admin' | 'profile'
+type View = 'workspace' | 'tasks' | 'browse' | 'admin' | 'profile'
 
 interface RailProps {
   username: string
   isAdmin: boolean
   view: View
+  /** Unseen task notices, shown as a badge on the Tasks link. */
+  taskBadge?: number
   onNavigate: (view: View) => void
   onLogout: () => void
 }
 
-export function Topbar({ username, isAdmin, view, onNavigate, onLogout }: RailProps) {
+export function Topbar({ username, isAdmin, view, taskBadge = 0, onNavigate, onLogout }: RailProps) {
   return (
     <aside className="rail">
       <div className="rail-brand">Zapis</div>
@@ -25,6 +27,22 @@ export function Topbar({ username, isAdmin, view, onNavigate, onLogout }: RailPr
         >
           <LayoutDashboard size={17} aria-hidden="true" />
           Workspace
+        </button>
+        <button
+          type="button"
+          className={`rail-link${view === 'tasks' ? ' active' : ''}`}
+          aria-current={view === 'tasks' ? 'page' : undefined}
+          onClick={() => onNavigate('tasks')}
+          title={taskBadge > 0 ? `Tasks (${taskBadge} new)` : 'Tasks'}
+        >
+          <ListChecks size={17} aria-hidden="true" />
+          Tasks
+          {taskBadge > 0 && (
+            <span className="rail-badge" aria-hidden="true">
+              {taskBadge > 99 ? '99+' : taskBadge}
+            </span>
+          )}
+          {taskBadge > 0 && <span className="sr-only"> ({taskBadge} new)</span>}
         </button>
         {isAdmin && (
           <>
