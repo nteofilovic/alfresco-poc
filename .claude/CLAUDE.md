@@ -108,3 +108,8 @@ Local development only — Community has no official clustering/HA. Default Alfr
 - There is no test suite in `api/` either (no `src/test`), so `mvn test` currently runs nothing.
 - No AMPs or custom content model are installed; the metadata endpoint (`PUT /api/nodes/{id}/metadata`)
   only works with Alfresco's stock aspects (e.g. `cm:titled`) until a real content model is added.
+
+## Git conventions
+
+Commit messages follow Conventional Commits with a bullet-point body. Full rules:
+@.claude/rules/git-conventions.md
