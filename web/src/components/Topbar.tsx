@@ -1,44 +1,87 @@
-import { FolderOpen, LayoutDashboard, LogOut, Search, X } from 'lucide-react'
+import { FolderOpen, LayoutDashboard, ListChecks, LogOut, Search, Settings, UserRound, X } from 'lucide-react'
 import type { FormEvent } from 'react'
 
-type View = 'dashboard' | 'browse'
+type View = 'workspace' | 'tasks' | 'browse' | 'admin' | 'profile'
 
 interface RailProps {
   username: string
+  isAdmin: boolean
   view: View
+  /** Unseen task notices, shown as a badge on the Tasks link. */
+  taskBadge?: number
   onNavigate: (view: View) => void
   onLogout: () => void
 }
 
-export function Topbar({ username, view, onNavigate, onLogout }: RailProps) {
+export function Topbar({ username, isAdmin, view, taskBadge = 0, onNavigate, onLogout }: RailProps) {
   return (
     <aside className="rail">
       <div className="rail-brand">Zapis</div>
       <nav className="rail-nav" aria-label="Views">
         <button
           type="button"
-          className={`rail-link${view === 'dashboard' ? ' active' : ''}`}
-          aria-current={view === 'dashboard' ? 'page' : undefined}
-          onClick={() => onNavigate('dashboard')}
+          className={`rail-link${view === 'workspace' ? ' active' : ''}`}
+          aria-current={view === 'workspace' ? 'page' : undefined}
+          onClick={() => onNavigate('workspace')}
+          title="Workspace"
         >
           <LayoutDashboard size={17} aria-hidden="true" />
-          Overview
+          Workspace
         </button>
         <button
           type="button"
-          className={`rail-link${view === 'browse' ? ' active' : ''}`}
-          aria-current={view === 'browse' ? 'page' : undefined}
-          onClick={() => onNavigate('browse')}
+          className={`rail-link${view === 'tasks' ? ' active' : ''}`}
+          aria-current={view === 'tasks' ? 'page' : undefined}
+          onClick={() => onNavigate('tasks')}
+          title={taskBadge > 0 ? `Tasks (${taskBadge} new)` : 'Tasks'}
         >
-          <FolderOpen size={17} aria-hidden="true" />
-          Documents
+          <ListChecks size={17} aria-hidden="true" />
+          Tasks
+          {taskBadge > 0 && (
+            <span className="rail-badge" aria-hidden="true">
+              {taskBadge > 99 ? '99+' : taskBadge}
+            </span>
+          )}
+          {taskBadge > 0 && <span className="sr-only"> ({taskBadge} new)</span>}
         </button>
+        {isAdmin && (
+          <>
+            <button
+              type="button"
+              className={`rail-link${view === 'browse' ? ' active' : ''}`}
+              aria-current={view === 'browse' ? 'page' : undefined}
+              onClick={() => onNavigate('browse')}
+              title="Documents"
+            >
+              <FolderOpen size={17} aria-hidden="true" />
+              Documents
+            </button>
+            <button
+              type="button"
+              className={`rail-link${view === 'admin' ? ' active' : ''}`}
+              aria-current={view === 'admin' ? 'page' : undefined}
+              onClick={() => onNavigate('admin')}
+              title="Administration"
+            >
+              <Settings size={17} aria-hidden="true" />
+              Administration
+            </button>
+          </>
+        )}
       </nav>
       <div className="rail-user">
-        <span className="rail-username" title={username}>
-          {username}
-        </span>
-        <button type="button" className="rail-link" onClick={onLogout}>
+        <button
+          type="button"
+          className={`rail-link${view === 'profile' ? ' active' : ''}`}
+          aria-current={view === 'profile' ? 'page' : undefined}
+          onClick={() => onNavigate('profile')}
+          title={`Profile (${username})`}
+          aria-label={`Profile, signed in as ${username}`}
+        >
+          <UserRound size={16} aria-hidden="true" />
+          <span className="rail-username">{username}</span>
+        </button>
+        <button type="button" className="rail-link" onClick={onLogout} title="Sign out">
           <LogOut size={16} aria-hidden="true" />
           Sign out
         </button>

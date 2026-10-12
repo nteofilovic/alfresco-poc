@@ -10,7 +10,8 @@ public class CorsConfig {
 
     @Bean
     public WebMvcConfigurer corsConfigurer(
-            @org.springframework.beans.factory.annotation.Value("${app.cors.allowed-origins}") String allowedOrigins) {
+            @org.springframework.beans.factory.annotation.Value("${app.cors.allowed-origins}") String allowedOrigins,
+            ch.dmspoc.api.service.WorkspaceService workspaceService) {
         return new WebMvcConfigurer() {
             @Override
             public void addCorsMappings(CorsRegistry registry) {
@@ -27,6 +28,10 @@ public class CorsConfig {
                 registry.addInterceptor(new AuthInterceptor())
                         .addPathPatterns("/api/**")
                         .excludePathPatterns("/api/auth/**");
+                registry.addInterceptor(new WorkspaceScopeInterceptor(workspaceService))
+                        .addPathPatterns("/api/nodes/**");
+                registry.addInterceptor(new AdminInterceptor())
+                        .addPathPatterns("/api/admin/**");
             }
         };
     }

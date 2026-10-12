@@ -17,6 +17,10 @@ public record NodeDto(
         OffsetDateTime modifiedAt,
         String createdByUser,
         List<String> aspectNames,
-        Map<String, Object> properties
+        Map<String, Object> properties,
+        List<PathElement> ancestors // root-first folder chain; only filled for search hits
 ) {
+
+    public record PathElement(String id, String name) {
+    }
 }
