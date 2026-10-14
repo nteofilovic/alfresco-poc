@@ -29,7 +29,14 @@ async function handle<T>(res: Response): Promise<T> {
 
 /** The API sends null for an empty description/message (and could for attachments); components expect strings/arrays. */
 function normalizeTask(t: TaskDto): TaskDto {
-  return { ...t, description: t.description ?? '', message: t.message ?? '', attachments: t.attachments ?? [] }
+  return {
+    ...t,
+    description: t.description ?? '',
+    message: t.message ?? '',
+    attachments: t.attachments ?? [],
+    siteId: t.siteId ?? null,
+    siteTitle: t.siteTitle ?? null,
+  }
 }
 
 export interface AuthUser {
@@ -60,10 +67,41 @@ export interface FolderTemplateNode {
   children: FolderTemplateNode[]
 }
 
-export interface Workspace {
-  exists: boolean
+/** A business area of the company (an Alfresco Share site). `rootId` is its document library. */
+export interface Space {
+  id: string
+  title: string
+  description: string
+  visibility: string
+  /** The caller's site role; null for admins who are not members. */
+  role: string | null
+  rootId: string
+}
+
+export type SpaceRole = 'SiteManager' | 'SiteCollaborator' | 'SiteContributor' | 'SiteConsumer'
+
+export interface NewSpace {
+  id?: string
+  title: string
+  description: string
+  visibility: 'PRIVATE' | 'MODERATED' | 'PUBLIC'
+}
+
+/** Admin-designed template for something members create in a space (a Client, Property...): a named folder plus fixed subfolders. */
+export interface FolderTemplate {
+  id: string
   name: string
-  rootId: string | null
+  description: string
+  /** Subfolders created inside every folder made from this template. */
+  folders: FolderTemplateNode[]
+}
+
+export type NewFolderTemplate = Pick<FolderTemplate, 'name' | 'description' | 'folders'>
+
+export interface SpaceMember {
+  username: string
+  displayName: string
+  role: SpaceRole
 }
 
 export interface Profile {
@@ -79,6 +117,8 @@ export type TaskScope = 'assigned' | 'created'
 export interface TaskAttachment {
   id: string
   name: string
+  /** False when the viewer has no access to the document in Alfresco (not a member of its space). */
+  accessible?: boolean
 }
 
 export interface TaskDto {
@@ -96,6 +136,9 @@ export interface TaskDto {
   message: string
   attachments: TaskAttachment[]
   resolved: boolean
+  /** The space the task belongs to; null when unknown. */
+  siteId: string | null
+  siteTitle: string | null
 }
 
 export interface NewTask {
@@ -104,6 +147,7 @@ export interface NewTask {
   dueDate: string
   assignee: string
   attachmentIds: string[]
+  siteId?: string
 }
 
 export interface TaskNotification {
@@ -198,8 +242,10 @@ export const api = {
     return { blob, contentType: res.headers.get('Content-Type') ?? blob.type }
   },
 
-  search: (q: string) =>
-    fetch(`/api/search?q=${encodeURIComponent(q)}`, { credentials: 'include' }).then((r) => handle<NodeDto[]>(r)),
+  search: (q: string, siteId?: string) =>
+    fetch(`/api/search?q=${encodeURIComponent(q)}${siteId ? `&siteId=${encodeURIComponent(siteId)}` : ''}`, {
+      credentials: 'include',
+    }).then((r) => handle<NodeDto[]>(r)),
 
   recentDocuments: (maxItems = 20) =>
     fetch(`/api/nodes/recent?maxItems=${maxItems}`, { credentials: 'include' }).then((r) => handle<NodeDto[]>(r)),
@@ -230,15 +276,52 @@ export const api = {
       body: JSON.stringify(user),
     }).then((r) => handle<ManagedUser>(r)),
 
-  getWorkspace: () => fetch('/api/workspace', { credentials: 'include' }).then((r) => handle<Workspace>(r)),
+  listSpaces: () => fetch('/api/spaces', { credentials: 'include' }).then((r) => handle<Space[]>(r)),
 
-  createWorkspace: (folders: FolderTemplateNode[]) =>
-    fetch('/api/admin/workspace', {
-      method: 'POST',
+  createSpace: (space: NewSpace) => fetch('/api/admin/spaces', jsonInit('POST', space)).then((r) => handle<Space>(r)),
+
+  deleteSpace: (id: string) =>
+    fetch(`/api/admin/spaces/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'include' }).then((r) =>
+      handle<void>(r),
+    ),
+
+  listSpaceMembers: (id: string) =>
+    fetch(`/api/admin/spaces/${encodeURIComponent(id)}/members`, { credentials: 'include' }).then((r) =>
+      handle<SpaceMember[]>(r),
+    ),
+
+  addSpaceMember: (id: string, username: string, role: SpaceRole) =>
+    fetch(`/api/admin/spaces/${encodeURIComponent(id)}/members`, jsonInit('POST', { username, role })).then((r) =>
+      handle<void>(r),
+    ),
+
+  listFolderTemplates: () =>
+    fetch('/api/folder-templates', { credentials: 'include' }).then((r) => handle<FolderTemplate[]>(r)),
+
+  createFolderTemplate: (template: NewFolderTemplate) =>
+    fetch('/api/admin/folder-templates', jsonInit('POST', template)).then((r) => handle<FolderTemplate>(r)),
+
+  updateFolderTemplate: (id: string, template: NewFolderTemplate) =>
+    fetch(`/api/admin/folder-templates/${encodeURIComponent(id)}`, jsonInit('PUT', template)).then((r) =>
+      handle<FolderTemplate>(r),
+    ),
+
+  deleteFolderTemplate: (id: string) =>
+    fetch(`/api/admin/folder-templates/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'include' }).then(
+      (r) => handle<void>(r),
+    ),
+
+  /** Creates a folder named `name` from the template inside `parentId` (the member's current folder). */
+  createFromTemplate: (parentId: string, templateId: string, name: string) =>
+    fetch(`/api/nodes/${encodeURIComponent(parentId)}/from-template`, jsonInit('POST', { templateId, name })).then((r) =>
+      handle<NodeDto>(r),
+    ),
+
+  removeSpaceMember: (id: string, username: string) =>
+    fetch(`/api/admin/spaces/${encodeURIComponent(id)}/members/${encodeURIComponent(username)}`, {
+      method: 'DELETE',
       credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ folders }),
-    }).then((r) => handle<Workspace>(r)),
+    }).then((r) => handle<void>(r)),
 
   listUsers: () => fetch('/api/admin/users', { credentials: 'include' }).then((r) => handle<ManagedUser[]>(r)),
 

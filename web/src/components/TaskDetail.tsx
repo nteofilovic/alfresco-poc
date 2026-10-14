@@ -121,6 +121,11 @@ export function TaskDetail({ task, username, nameOf, activeAttachmentId, onBack,
             {task.attachments.map((a) => (
               <li key={a.id} className={a.id === activeAttachmentId ? 'active' : undefined}>
                 <FileIcon kind={kindFor(a.name, false)} size={16} />
+                {a.accessible === false ? (
+                  <span className="task-attach-name task-attach-denied">
+                    No access to this document{task.siteTitle ? ` (${task.siteTitle})` : ''}. Ask an administrator to add you to the space.
+                  </span>
+                ) : (
                 <button
                   type="button"
                   className="link task-attach-name"
@@ -130,6 +135,7 @@ export function TaskDetail({ task, username, nameOf, activeAttachmentId, onBack,
                 >
                   {a.name}
                 </button>
+                )}
               </li>
             ))}
           </ul>

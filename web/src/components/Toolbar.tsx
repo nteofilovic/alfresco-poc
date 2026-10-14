@@ -4,13 +4,15 @@ import { Spinner } from './Spinner'
 interface Props {
   refreshing: boolean
   canCreateFolder: boolean
+  /** False for read-only members (site role Viewer). */
+  canUpload: boolean
   onUpload: () => void
   onNewFolder: () => void
   onRefresh: () => void
 }
 
 /** Folder header actions: refresh, new folder (admins) and upload. */
-export function Toolbar({ refreshing, canCreateFolder, onUpload, onNewFolder, onRefresh }: Props) {
+export function Toolbar({ refreshing, canCreateFolder, canUpload, onUpload, onNewFolder, onRefresh }: Props) {
   return (
     <div className="toolbar">
       <button
@@ -29,10 +31,12 @@ export function Toolbar({ refreshing, canCreateFolder, onUpload, onNewFolder, on
           New folder
         </button>
       )}
-      <button type="button" className="btn btn-secondary btn-lg" onClick={onUpload}>
-        <Upload size={16} aria-hidden="true" />
-        Upload
-      </button>
+      {canUpload && (
+        <button type="button" className="btn btn-secondary btn-lg" onClick={onUpload}>
+          <Upload size={16} aria-hidden="true" />
+          Upload
+        </button>
+      )}
     </div>
   )
 }

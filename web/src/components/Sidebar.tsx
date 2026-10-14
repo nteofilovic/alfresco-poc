@@ -3,13 +3,13 @@ import type { ReactNode } from 'react'
 import { initials } from '../formatters'
 import { ActionsMenu } from './ActionsMenu'
 
-export type View = 'workspace' | 'tasks' | 'browse' | 'admin' | 'profile'
+export type View = 'home' | 'spaces' | 'tasks' | 'admin' | 'profile'
 
 interface Props {
   /** Display name for the user card. */
   displayName: string
   isAdmin: boolean
-  /** Shown under the product name (the workspace / company name). */
+  /** Shown under the product name (the company name); empty hides it. */
   companyName: string
   view: View
   /** Unseen task notices, shown as a badge on the Tasks link. */
@@ -69,8 +69,8 @@ export function Sidebar({ displayName, isAdmin, companyName, view, taskBadge = 0
       </div>
 
       <nav className="rail-nav" aria-label="Main">
-        <NavLink view="workspace" current={view} icon={icon(House)} label="Workspace" onNavigate={onNavigate} />
-        {isAdmin && <NavLink view="browse" current={view} icon={icon(FolderClosed)} label="Documents" onNavigate={onNavigate} />}
+        <NavLink view="home" current={view} icon={icon(House)} label="Home" onNavigate={onNavigate} />
+        <NavLink view="spaces" current={view} icon={icon(FolderClosed)} label="Spaces" onNavigate={onNavigate} />
         <NavLink view="tasks" current={view} icon={icon(SquareCheckBig)} label="Tasks" badge={taskBadge} onNavigate={onNavigate} />
         {isAdmin && <NavLink view="admin" current={view} icon={icon(Settings)} label="Administration" onNavigate={onNavigate} />}
       </nav>

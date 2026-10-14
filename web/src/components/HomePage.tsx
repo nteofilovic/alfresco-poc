@@ -1,12 +1,18 @@
+import type { Space } from '../api'
 import { formatDate, greeting, initials } from '../formatters'
 import type { TaskActivity } from '../hooks/useTaskActivity'
 import type { RecentDocument } from '../hooks/useRecentDocuments'
 import { FileTile } from './FileIcon'
+import { SpaceMark } from './SpaceMark'
 
 interface Props {
   name: string
   activity: TaskActivity
   recent: RecentDocument[]
+  /** The spaces the user belongs to; null while loading. */
+  spaces: Space[] | null
+  onOpenSpace: (space: Space) => void
+  onOpenSpaces: () => void
   /** Opens the Tasks page, optionally on a specific task. */
   onOpenTasks: (taskId?: string) => void
   onOpenRecent: (doc: RecentDocument) => void
@@ -20,8 +26,8 @@ interface ActivityItem {
   taskId: string
 }
 
-/** Workspace landing: greeting plus My tasks / Latest activity / Recently opened cards. */
-export function WorkspaceOverview({ name, activity, recent, onOpenTasks, onOpenRecent }: Props) {
+/** Home: greeting plus My tasks / Latest activity / Recently opened / Your spaces cards. */
+export function HomePage({ name, activity, recent, spaces, onOpenSpace, onOpenSpaces, onOpenTasks, onOpenRecent }: Props) {
   const { loaded, failed, openCount, overdueCount, nextTask } = activity
 
   const items: ActivityItem[] = [
@@ -141,6 +147,31 @@ export function WorkspaceOverview({ name, activity, recent, onOpenTasks, onOpenR
             </ul>
           ) : (
             <p className="card-note">Documents you open will show up here.</p>
+          )}
+        </article>
+
+        <article className="card" aria-labelledby="card-spaces">
+          <div className="card-head">
+            <h2 id="card-spaces">Your spaces</h2>
+            <button type="button" className="link link-accent" onClick={onOpenSpaces}>
+              View all
+            </button>
+          </div>
+          {spaces === null ? (
+            <p className="card-note">Loading…</p>
+          ) : spaces.length > 0 ? (
+            <ul className="card-list">
+              {spaces.slice(0, 4).map((s) => (
+                <li key={s.id}>
+                  <button type="button" className="recent-item" onClick={() => onOpenSpace(s)}>
+                    <SpaceMark id={s.id} title={s.title} size="sm" />
+                    <span className="recent-item-name">{s.title}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="card-note">You aren’t a member of any space yet.</p>
           )}
         </article>
       </div>

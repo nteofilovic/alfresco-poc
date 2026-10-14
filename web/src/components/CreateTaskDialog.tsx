@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Paperclip, X } from 'lucide-react'
-import { api, type TaskAssignee, type TaskAttachment, type TaskDto } from '../api'
+import { api, type Space, type TaskAssignee, type TaskAttachment, type TaskDto } from '../api'
 import { apiErrorMessage, kindFor, todayInputValue } from '../formatters'
 import { DialogShell } from './DialogShell'
 import { FileIcon } from './FileIcon'
@@ -8,18 +8,21 @@ import { AttachmentPickerDialog } from './AttachmentPickerDialog'
 
 interface Props {
   assignees: TaskAssignee[]
-  /** Where the attachment picker starts; null when no workspace exists yet (attaching is then unavailable). */
-  pickerRoot: { id: string; name: string } | null
+  /** Spaces documents can be attached from; the picker starts in the chosen one. */
+  spaces: Space[]
   onCreated: (task: TaskDto) => void
   onCancel: () => void
 }
 
-export function CreateTaskDialog({ assignees, pickerRoot, onCreated, onCancel }: Props) {
+export function CreateTaskDialog({ assignees, spaces, onCreated, onCancel }: Props) {
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [dueDate, setDueDate] = useState('')
   const [assignee, setAssignee] = useState('')
   const [attachments, setAttachments] = useState<TaskAttachment[]>([])
+  const [spaceId, setSpaceId] = useState(spaces.length === 1 ? spaces[0].id : '')
+  const space = spaces.find((s) => s.id === spaceId) ?? null
+  const pickerRoot = space ? { id: space.rootId, name: space.title } : null
   const [picking, setPicking] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -34,6 +37,7 @@ export function CreateTaskDialog({ assignees, pickerRoot, onCreated, onCancel }:
         dueDate,
         assignee,
         attachmentIds: attachments.map((a) => a.id),
+        siteId: spaceId || undefined,
       })
       onCreated(task)
     } catch (e) {
@@ -82,6 +86,24 @@ export function CreateTaskDialog({ assignees, pickerRoot, onCreated, onCancel }:
           </label>
         </div>
 
+        <label className="dialog-field">
+          Space
+          <select
+            value={spaceId}
+            onChange={(e) => {
+              setSpaceId(e.target.value)
+              setAttachments([]) // attachments belong to the space they were picked from
+            }}
+          >
+            <option value="">No space</option>
+            {spaces.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.title}
+              </option>
+            ))}
+          </select>
+        </label>
+
         <div className="dialog-field">
           <span id="task-attach-label">Documents</span>
           {attachments.length > 0 && (
@@ -109,7 +131,7 @@ export function CreateTaskDialog({ assignees, pickerRoot, onCreated, onCancel }:
               className="btn btn-secondary"
               onClick={() => setPicking(true)}
               disabled={!pickerRoot || busy}
-              title={pickerRoot ? undefined : 'The workspace isn’t set up yet'}
+              title={pickerRoot ? undefined : 'Choose a space first'}
             >
               <Paperclip size={15} aria-hidden="true" />
               {attachments.length > 0 ? 'Change documents…' : 'Attach documents…'}

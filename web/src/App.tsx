@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, CSSProperties, FormEvent } from 'react'
-import { api, type AuthUser, type NodeDto, type Workspace } from './api'
+import { api, type AuthUser, type FolderTemplate, type NodeDto, type Space } from './api'
 import { LoginForm } from './LoginForm'
 import { Sidebar, type View } from './components/Sidebar'
 import { Topbar } from './components/Topbar'
@@ -13,7 +13,11 @@ import { AdministrationPage } from './components/AdministrationPage'
 import { ProfilePage } from './components/ProfilePage'
 import { TasksPage } from './components/TasksPage'
 import { ActivityList } from './components/ActivityPanel'
-import { WorkspaceOverview } from './components/WorkspaceOverview'
+import { HomePage } from './components/HomePage'
+import { SpacesPage } from './components/SpacesPage'
+import { NewFromTemplateDialog } from './components/NewFromTemplateDialog'
+import { SpaceMark } from './components/SpaceMark'
+import { spaceColor } from './spaceColor'
 import { useTaskActivity } from './hooks/useTaskActivity'
 import { useRecentDocuments, type RecentDocument } from './hooks/useRecentDocuments'
 import { PreviewPane, RATIO_MAX, RATIO_MIN } from './components/PreviewPane'
@@ -24,10 +28,9 @@ import { FolderPickerDialog } from './components/FolderPickerDialog'
 import type { MenuAction } from './components/ActionsMenu'
 import { ErrorToast } from './components/ErrorToast'
 import { Spinner } from './components/Spinner'
-import { EmptyState } from './components/EmptyState'
 import { downloadNodes } from './download'
 import { apiErrorMessage } from './formatters'
-import { Copy, Download, FileStack, FolderInput, FolderOpen, Trash2 } from 'lucide-react'
+import { ArrowLeft, Copy, Download, FileStack, FolderInput, Trash2 } from 'lucide-react'
 import './App.css'
 
 interface Crumb {
@@ -39,16 +42,16 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
 
 const PREVIEW_RATIO_KEY = 'zapis.previewRatio'
 
-const ROOT: Crumb = { id: '-my-', name: 'Home' }
-
 function App() {
   const [authChecked, setAuthChecked] = useState(false)
   const [username, setUsername] = useState<string | null>(null)
   const [firstName, setFirstName] = useState('')
   const [isAdmin, setIsAdmin] = useState(false)
-  const [path, setPath] = useState<Crumb[]>([]) // folders below the current view's root
-  const [rootOverride, setRootOverride] = useState<Crumb | null>(null)
-  const [workspace, setWorkspace] = useState<Workspace | null>(null)
+  const [path, setPath] = useState<Crumb[]>([]) // folders below the current space's document library
+  const [spaces, setSpaces] = useState<Space[] | null>(null)
+  const [currentSpace, setCurrentSpace] = useState<Space | null>(null)
+  const [templates, setTemplates] = useState<FolderTemplate[]>([])
+  const [templateToCreate, setTemplateToCreate] = useState<FolderTemplate | null>(null)
   const [nodes, setNodes] = useState<NodeDto[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
@@ -81,7 +84,7 @@ function App() {
   }, [])
   const [rowDialog, setRowDialog] = useState<{ kind: 'rename' | 'copy' | 'move'; node: NodeDto } | null>(null)
   const [nodeToDelete, setNodeToDelete] = useState<NodeDto | null>(null)
-  const [view, setView] = useState<View>('workspace')
+  const [view, setView] = useState<View>('home')
   const fileInputRef = useRef<HTMLInputElement>(null)
   // A task id to open when the Tasks page mounts (deep link from an activity notice).
   const [pendingTaskId, setPendingTaskId] = useState<string | null>(null)
@@ -92,12 +95,10 @@ function App() {
   const recentDocs = useRecentDocuments(username)
   const addRecentDoc = recentDocs.add
 
-  // Admins' "Documents" view starts at their Home folder; the Workspace view starts at the workspace's document library.
-  const baseRoot: Crumb | null = view === 'workspace' ? (workspace?.rootId ? { id: workspace.rootId, name: workspace.name } : null) : ROOT
-  // A search hit outside the view's normal root (admins only) re-roots the trail at the repository root.
-  const root = rootOverride ?? baseRoot
+  // Inside a space the trail starts at that space's document library.
+  const root: Crumb | null = currentSpace ? { id: currentSpace.rootId, name: currentSpace.title } : null
   const breadcrumb = root ? [root, ...path] : []
-  const currentFolder = breadcrumb[breadcrumb.length - 1] ?? ROOT
+  const currentFolder: Crumb = breadcrumb[breadcrumb.length - 1] ?? { id: '', name: '' }
 
   const loadFolder = useCallback(async (folderId: string) => {
     setLoading(true)
@@ -128,29 +129,60 @@ function App() {
   useEffect(() => {
     if (!username) return
     api
-      .getWorkspace()
-      .then(setWorkspace)
-      .catch((e) => setError(String(e)))
+      .listSpaces()
+      .then(setSpaces)
+      .catch((e) => {
+        setSpaces([])
+        setError(String(e))
+      })
   }, [username])
+
+  const reloadTemplates = useCallback(() => {
+    api
+      .listFolderTemplates()
+      .then(setTemplates)
+      .catch(() => setTemplates([])) // the New menu just has no template entries
+  }, [])
+
+  useEffect(() => {
+    if (username) reloadTemplates()
+  }, [username, reloadTemplates])
 
   // Refetch whenever the user moves between views so notices and the rail badge stay current (no polling).
   useEffect(() => {
     if (username) refreshTaskActivity()
   }, [username, view, refreshTaskActivity])
 
-  const browsing = (view === 'browse' || view === 'workspace') && root !== null
+  const browsing = view === 'spaces' && root !== null
   useEffect(() => {
     if (username && browsing) loadFolder(currentFolder.id)
   }, [username, browsing, currentFolder.id, loadFolder])
 
   function handleNavigate(next: View) {
-    if ((next === 'admin' || next === 'browse') && !isAdmin) return
+    if (next === 'admin' && !isAdmin) return
     setSearchResults(null)
     setPath([])
-    setRootOverride(null)
+    setCurrentSpace(null)
     setDocPreview(null)
     setView(next)
   }
+
+  function openSpace(space: Space) {
+    setSearchResults(null)
+    setSearchQuery('')
+    setPath([])
+    setDocPreview(null)
+    setCurrentSpace(space)
+    setView('spaces')
+  }
+
+  /** Admin created or removed a space: refresh the list the rest of the app shows. */
+  const reloadSpaces = useCallback(() => {
+    api
+      .listSpaces()
+      .then(setSpaces)
+      .catch((e) => setError(String(e)))
+  }, [])
 
   function openTasks(taskId?: string) {
     setPendingTaskId(taskId ?? null)
@@ -173,32 +205,33 @@ function App() {
     setPendingTaskId(null)
     resetTaskActivity()
     setPath([])
-    setRootOverride(null)
-    setWorkspace(null)
+    setSpaces(null)
+    setTemplates([])
+    setCurrentSpace(null)
     setSearchResults(null)
-    setView('workspace')
+    setView('home')
   }
 
-  /** Where a search hit lives, as a trail relative to the view's root (or the repository root if it's outside it). */
-  function locate(node: NodeDto, includeSelf: boolean): { override: Crumb | null; trail: Crumb[] } {
+  /** Where a search hit lives: its space (matched by document-library id) and the folder trail below it. */
+  function locate(node: NodeDto, includeSelf: boolean): { space: Space | null; trail: Crumb[] } {
     const ancestors = node.ancestors ?? []
-    const at = baseRoot ? ancestors.findIndex((a) => a.id === baseRoot.id) : -1
-    const override = at >= 0 || ancestors.length === 0 ? null : { id: ancestors[0].id, name: ancestors[0].name }
-    const trail = ancestors.slice(at >= 0 ? at + 1 : 1).map((a) => ({ id: a.id, name: a.name }))
+    const at = ancestors.findIndex((a) => spaces?.some((s) => s.rootId === a.id))
+    const space = at >= 0 ? (spaces?.find((s) => s.rootId === ancestors[at].id) ?? null) : null
+    const trail = at >= 0 ? ancestors.slice(at + 1).map((a) => ({ id: a.id, name: a.name })) : []
     if (includeSelf) trail.push({ id: node.id, name: node.name })
-    return { override, trail }
+    return { space, trail }
   }
 
   const locationLabel = (node: NodeDto) => {
-    const { override, trail } = locate(node, false)
-    const start = override ?? baseRoot
-    return [...(start ? [start] : []), ...trail].map((c) => c.name).join(' / ')
+    const { space, trail } = locate(node, false)
+    return [...(space ? [space.title] : []), ...trail.map((c) => c.name)].join(' / ')
   }
 
   function openLocation(node: NodeDto, includeSelf: boolean) {
-    const { override, trail } = locate(node, includeSelf)
+    const { space, trail } = locate(node, includeSelf)
+    if (!space) return
     setSearchResults(null)
-    setRootOverride(override)
+    setCurrentSpace(space)
     setPath(trail)
   }
 
@@ -314,14 +347,26 @@ function App() {
     }
   }
 
+  /** Throws on failure so the dialog can show the message inline. */
+  async function handleCreateFromTemplate(template: FolderTemplate, name: string) {
+    await api.createFromTemplate(currentFolder.id, template.id, name)
+    setTemplateToCreate(null)
+    await loadFolder(currentFolder.id)
+  }
+
   async function handleSearch(e: FormEvent) {
     e.preventDefault()
     if (!searchQuery.trim()) {
       setSearchResults(null)
       return
     }
-    // Search is global (top bar); results show in the Workspace listing unless a document view is already open.
-    if (view !== 'workspace' && view !== 'browse') handleNavigate('workspace')
+    // Search is global (top bar, all spaces the user can read); results show in the Spaces listing.
+    if (view !== 'spaces') {
+      setCurrentSpace(null)
+      setPath([])
+      setDocPreview(null)
+      setView('spaces')
+    }
     setLoading(true)
     setError(null)
     try {
@@ -458,8 +503,10 @@ function App() {
     const name = taskActivity.displayNameOf(username ?? '')
     return name && name !== username ? name : firstName || username || ''
   })()
-  const canUploadHere = browsing && !searchResults
-  const companyName = workspace?.exists ? workspace.name : ''
+  // Viewers (site role SiteConsumer) can read but not add documents; Alfresco enforces it, this hides the buttons.
+  const canWrite = isAdmin || currentSpace?.role !== 'SiteConsumer'
+  const canUploadHere = browsing && !searchResults && canWrite
+  const companyName = ''
 
   if (!authChecked) {
     return (
@@ -507,7 +554,14 @@ function App() {
             />
           )}
           onUpload={canUploadHere ? pickFiles : null}
-          uploadHint={searchResults ? 'Clear the search to upload into a folder' : 'Open a folder in the Workspace to upload'}
+          uploadHint={searchResults ? 'Clear the search to upload into a folder' : 'Open a space to upload'}
+          templates={templates}
+          onNewFromTemplate={
+            canUploadHere
+              ? (id) => setTemplateToCreate(templates.find((t) => t.id === id) ?? null)
+              : null
+          }
+          templateHint={searchResults ? 'Clear the search first' : 'Open a space to add one'}
           onNewFolder={canUploadHere && isAdmin ? handleNewFolder : null}
           newFolderHint={isAdmin ? 'Open a folder to create a folder in it' : 'Only administrators can create folders'}
         />
@@ -516,11 +570,14 @@ function App() {
         <main className="main">
           {error && <ErrorToast message={error} onDismiss={() => setError(null)} />}
 
-          {view === 'workspace' && !searchResults && (
-            <WorkspaceOverview
+          {view === 'home' && (
+            <HomePage
               name={firstName || userDisplayName}
               activity={taskActivity}
               recent={recentDocs.docs}
+              spaces={spaces}
+              onOpenSpace={openSpace}
+              onOpenSpaces={() => handleNavigate('spaces')}
               onOpenTasks={openTasks}
               onOpenRecent={openRecent}
             />
@@ -533,7 +590,7 @@ function App() {
               nameOf={taskActivity.nameOf}
               pendingTaskId={pendingTaskId}
               onPendingConsumed={clearPendingTask}
-              pickerRoot={workspace?.rootId ? { id: workspace.rootId, name: workspace.name } : null}
+              spaces={spaces ?? []}
               activePreviewId={docPreviewNode?.id ?? null}
               onPreview={(node) => {
                 setPreview(null)
@@ -544,30 +601,21 @@ function App() {
           ) : view === 'profile' ? (
             <ProfilePage username={username} onProfileUpdated={() => {}} />
           ) : view === 'admin' ? (
-            isAdmin ? <AdministrationPage workspace={workspace} onWorkspaceCreated={setWorkspace} /> : null
-          ) : !root ? (
-            <section className="folder">
-              <div className="sheet">
-                {workspace === null ? (
-                  <div className="admin-placeholder">
-                    <Spinner size={22} label="Loading workspace…" />
-                  </div>
-                ) : (
-                  <EmptyState
-                    icon={FolderOpen}
-                    title="The workspace isn't set up yet"
-                    description={
-                      isAdmin
-                        ? 'Open Administration and design the folder structure to get started.'
-                        : 'Ask an administrator to set up the workspace.'
-                    }
-                  />
-                )}
-              </div>
-            </section>
+            isAdmin ? <AdministrationPage spaces={spaces} onSpacesChanged={reloadSpaces} onTemplatesChanged={reloadTemplates} /> : null
+          ) : view === 'home' ? null : !root && !searchResults ? (
+            <SpacesPage spaces={spaces} isAdmin={isAdmin} onOpen={openSpace} />
           ) : (
             <section className="folder" aria-label="Files">
               <div className="folder-head">
+                {currentSpace && !searchResults && (
+                  <div className="space-banner" style={spaceColor(currentSpace.id)}>
+                    <SpaceMark id={currentSpace.id} title={currentSpace.title} size="sm" />
+                    <span className="space-banner-name">{currentSpace.title}</span>
+                    <button type="button" className="link link-accent space-back" onClick={() => handleNavigate('spaces')}>
+                      <ArrowLeft size={14} aria-hidden="true" /> All spaces
+                    </button>
+                  </div>
+                )}
                 <Breadcrumbs
                   breadcrumb={breadcrumb}
                   searchResults={searchResults ? { query: searchQuery, count: searchResults.length } : null}
@@ -578,6 +626,7 @@ function App() {
                   <Toolbar
                     refreshing={loading}
                     canCreateFolder={isAdmin}
+                    canUpload={canWrite}
                     onUpload={pickFiles}
                     onNewFolder={handleNewFolder}
                     onRefresh={() => loadFolder(currentFolder.id)}
@@ -650,6 +699,15 @@ function App() {
           onExpandedChange={setPreviewExpanded}
           onSelect={selectPreview}
           onClose={closePreview}
+        />
+      )}
+
+      {templateToCreate && (
+        <NewFromTemplateDialog
+          template={templateToCreate}
+          parentName={currentFolder.name}
+          onCreate={(name) => handleCreateFromTemplate(templateToCreate, name)}
+          onCancel={() => setTemplateToCreate(null)}
         />
       )}
 
