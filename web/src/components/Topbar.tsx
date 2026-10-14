@@ -1,124 +1,167 @@
-import { FolderOpen, LayoutDashboard, ListChecks, LogOut, Search, Settings, UserRound, X } from 'lucide-react'
-import type { FormEvent } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
+import type { FormEvent, ReactNode } from 'react'
+import { Bell, FolderPlus, Plus, Search, Upload, X } from 'lucide-react'
+import { ActionsMenu } from './ActionsMenu'
 
-type View = 'workspace' | 'tasks' | 'browse' | 'admin' | 'profile'
+const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
 
-interface RailProps {
-  username: string
-  isAdmin: boolean
-  view: View
-  /** Unseen task notices, shown as a badge on the Tasks link. */
-  taskBadge?: number
-  onNavigate: (view: View) => void
-  onLogout: () => void
-}
-
-export function Topbar({ username, isAdmin, view, taskBadge = 0, onNavigate, onLogout }: RailProps) {
-  return (
-    <aside className="rail">
-      <div className="rail-brand">Zapis</div>
-      <nav className="rail-nav" aria-label="Views">
-        <button
-          type="button"
-          className={`rail-link${view === 'workspace' ? ' active' : ''}`}
-          aria-current={view === 'workspace' ? 'page' : undefined}
-          onClick={() => onNavigate('workspace')}
-          title="Workspace"
-        >
-          <LayoutDashboard size={17} aria-hidden="true" />
-          Workspace
-        </button>
-        <button
-          type="button"
-          className={`rail-link${view === 'tasks' ? ' active' : ''}`}
-          aria-current={view === 'tasks' ? 'page' : undefined}
-          onClick={() => onNavigate('tasks')}
-          title={taskBadge > 0 ? `Tasks (${taskBadge} new)` : 'Tasks'}
-        >
-          <ListChecks size={17} aria-hidden="true" />
-          Tasks
-          {taskBadge > 0 && (
-            <span className="rail-badge" aria-hidden="true">
-              {taskBadge > 99 ? '99+' : taskBadge}
-            </span>
-          )}
-          {taskBadge > 0 && <span className="sr-only"> ({taskBadge} new)</span>}
-        </button>
-        {isAdmin && (
-          <>
-            <button
-              type="button"
-              className={`rail-link${view === 'browse' ? ' active' : ''}`}
-              aria-current={view === 'browse' ? 'page' : undefined}
-              onClick={() => onNavigate('browse')}
-              title="Documents"
-            >
-              <FolderOpen size={17} aria-hidden="true" />
-              Documents
-            </button>
-            <button
-              type="button"
-              className={`rail-link${view === 'admin' ? ' active' : ''}`}
-              aria-current={view === 'admin' ? 'page' : undefined}
-              onClick={() => onNavigate('admin')}
-              title="Administration"
-            >
-              <Settings size={17} aria-hidden="true" />
-              Administration
-            </button>
-          </>
-        )}
-      </nav>
-      <div className="rail-user">
-        <button
-          type="button"
-          className={`rail-link${view === 'profile' ? ' active' : ''}`}
-          aria-current={view === 'profile' ? 'page' : undefined}
-          onClick={() => onNavigate('profile')}
-          title={`Profile (${username})`}
-          aria-label={`Profile, signed in as ${username}`}
-        >
-          <UserRound size={16} aria-hidden="true" />
-          <span className="rail-username">{username}</span>
-        </button>
-        <button type="button" className="rail-link" onClick={onLogout} title="Sign out">
-          <LogOut size={16} aria-hidden="true" />
-          Sign out
-        </button>
-      </div>
-    </aside>
-  )
-}
-
-interface SearchProps {
+interface Props {
   searchQuery: string
   hasSearchResults: boolean
   onSearchQueryChange: (value: string) => void
   onSearchSubmit: (e: FormEvent) => void
   onClearSearch: () => void
+  /** Unseen notices; shows a dot on the bell. */
+  notificationCount: number
+  /** Popover content for the bell (the activity list); `close` dismisses the popover, e.g. after navigating. */
+  notifications: (close: () => void) => ReactNode
+  /** Null when there is no folder to upload into (the menu item is then disabled with a hint). */
+  onUpload: (() => void) | null
+  /** Null when folders can't be created here (non-admins, or no folder open). */
+  onNewFolder: (() => void) | null
+  newFolderHint: string
+  uploadHint: string
 }
 
-export function SearchBar({ searchQuery, hasSearchResults, onSearchQueryChange, onSearchSubmit, onClearSearch }: SearchProps) {
+/** Top bar: global search (Enter submits, Ctrl/⌘+K focuses), notifications and the "New" menu. */
+export function Topbar({
+  searchQuery,
+  hasSearchResults,
+  onSearchQueryChange,
+  onSearchSubmit,
+  onClearSearch,
+  notificationCount,
+  notifications,
+  onUpload,
+  onNewFolder,
+  newFolderHint,
+  uploadHint,
+}: Props) {
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        inputRef.current?.focus()
+        inputRef.current?.select()
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [])
+
   return (
-    <form className="search" onSubmit={onSearchSubmit} role="search">
-      <div className="search-field">
-        <Search size={17} className="search-field-icon" aria-hidden="true" />
-        <input
-          placeholder="Search names and contents of every document"
-          value={searchQuery}
-          onChange={(e) => onSearchQueryChange(e.target.value)}
-          aria-label="Search all documents"
-        />
+    <header className="topbar">
+      <form className="search" onSubmit={onSearchSubmit} role="search">
+        <label className="search-field">
+          <Search size={18} strokeWidth={1.8} className="search-field-icon" aria-hidden="true" />
+          <span className="sr-only">Search documents</span>
+          <input
+            ref={inputRef}
+            type="search"
+            placeholder="Search names, contents and tags…"
+            value={searchQuery}
+            onChange={(e) => onSearchQueryChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape' && (searchQuery || hasSearchResults)) {
+                e.preventDefault()
+                onClearSearch()
+              }
+            }}
+          />
+          {searchQuery || hasSearchResults ? (
+            <button type="button" className="search-clear" onClick={onClearSearch} aria-label="Clear search" title="Clear search">
+              <X size={15} aria-hidden="true" />
+            </button>
+          ) : (
+            <kbd className="kbd" aria-hidden="true">
+              {IS_MAC ? '⌘ K' : 'Ctrl K'}
+            </kbd>
+          )}
+        </label>
+      </form>
+
+      <div className="topbar-actions">
+        <NotificationsButton count={notificationCount}>{notifications}</NotificationsButton>
+        <ActionsMenu
+          label="New"
+          disabled={false}
+          triggerClassName="btn btn-primary btn-lg"
+          actions={[
+            {
+              key: 'upload',
+              label: 'Upload files',
+              icon: <Upload size={15} aria-hidden="true" />,
+              disabled: !onUpload,
+              hint: uploadHint,
+              onSelect: () => onUpload?.(),
+            },
+            {
+              key: 'folder',
+              label: 'New folder',
+              icon: <FolderPlus size={15} aria-hidden="true" />,
+              disabled: !onNewFolder,
+              hint: newFolderHint,
+              onSelect: () => onNewFolder?.(),
+            },
+          ]}
+        >
+          <Plus size={16} strokeWidth={2.2} aria-hidden="true" />
+          New
+        </ActionsMenu>
       </div>
-      <button type="submit" className="btn btn-primary">
-        Search
+    </header>
+  )
+}
+
+/** Bell button with a non-modal popover; closes on outside click or Esc. */
+function NotificationsButton({ count, children }: { count: number; children: (close: () => void) => ReactNode }) {
+  const [open, setOpen] = useState(false)
+  const wrapRef = useRef<HTMLDivElement>(null)
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  const panelId = useId()
+
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent) => {
+      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setOpen(false)
+        buttonRef.current?.focus()
+      }
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  return (
+    <div className="notif-wrap" ref={wrapRef}>
+      <button
+        ref={buttonRef}
+        type="button"
+        className="btn btn-secondary btn-icon btn-lg notif-button"
+        aria-label={count > 0 ? `Notifications (${count} new)` : 'Notifications'}
+        title="Notifications"
+        aria-expanded={open}
+        aria-controls={open ? panelId : undefined}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <Bell size={18} strokeWidth={1.8} aria-hidden="true" />
+        {count > 0 && <span className="notif-dot" aria-hidden="true" />}
       </button>
-      {hasSearchResults && (
-        <button type="button" className="btn btn-ghost" onClick={onClearSearch}>
-          <X size={14} aria-hidden="true" />
-          Clear
-        </button>
+      {open && (
+        <div id={panelId} className="notif-panel" role="dialog" aria-label="Notifications">
+          <p className="notif-title">Notifications</p>
+          {children(() => setOpen(false))}
+        </div>
       )}
-    </form>
+    </div>
   )
 }

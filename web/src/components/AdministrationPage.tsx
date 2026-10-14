@@ -195,7 +195,11 @@ export function AdministrationPage({
 }) {
   const [refreshKey, setRefreshKey] = useState(0)
   return (
-    <section className="folder">
+    <section className="folder" aria-labelledby="admin-heading">
+      <div className="page-head">
+        <h1 id="admin-heading">Administration</h1>
+        <p>Design the workspace folder structure and manage who can sign in.</p>
+      </div>
       <div className="sheet admin-sheet">
         <WorkspaceBuilder workspace={workspace} onCreated={onWorkspaceCreated} />
         <CreateUserForm onCreated={() => setRefreshKey((k) => k + 1)} />

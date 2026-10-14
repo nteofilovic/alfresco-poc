@@ -129,8 +129,8 @@ export function TasksPage({
   return (
     <section className="tasks" aria-labelledby="tasks-heading">
       <div className="tasks-head">
-        <h2 id="tasks-heading">Tasks</h2>
-        <button type="button" className="btn btn-primary" onClick={() => setCreating(true)}>
+        <h1 id="tasks-heading">Tasks</h1>
+        <button type="button" className="btn btn-primary btn-lg" onClick={() => setCreating(true)}>
           <Plus size={15} aria-hidden="true" />
           New task
         </button>

@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import type { KeyboardEvent, ReactNode } from 'react'
-import { ChevronDown, Ellipsis } from 'lucide-react'
+import type { CSSProperties, KeyboardEvent, ReactNode } from 'react'
+import { ChevronDown, EllipsisVertical } from 'lucide-react'
 
 export interface MenuAction {
   key: string
@@ -18,13 +18,27 @@ interface Props {
   disabled: boolean
   disabledHint?: string
   actions: MenuAction[]
-  /** Compact "⋯" icon trigger with the menu aligned to its right edge (per-row menus). `label` becomes its accessible name. */
+  /** Compact icon trigger with the menu aligned to its right edge (per-row menus). `label` becomes its accessible name. */
   iconOnly?: boolean
+  /** Icon for an `iconOnly` trigger; defaults to the vertical "⋮". */
+  icon?: ReactNode
+  /** Extra class for the trigger button. */
+  triggerClassName?: string
+  /** Content of a text trigger; defaults to `label` plus a chevron. */
+  children?: ReactNode
 }
 
-/** Menu-button pattern: arrow keys move, Home/End jump, Esc closes and returns focus, outside click closes. */
-export function ActionsMenu({ label, disabled, disabledHint, actions, iconOnly = false }: Props) {
+const ITEM_HEIGHT = 40
+const MENU_WIDTH = 200 // matches .menu min-width
+
+/**
+ * Menu-button pattern: arrow keys move, Home/End jump, Esc closes and returns focus, outside click closes.
+ * The menu is fixed-positioned from the trigger's rect so scrolling containers (the file table card) never clip it,
+ * and it opens upwards when there is no room below.
+ */
+export function ActionsMenu({ label, disabled, disabledHint, actions, iconOnly = false, icon, triggerClassName, children }: Props) {
   const [openState, setOpen] = useState(false)
+  const [position, setPosition] = useState<CSSProperties>({})
   const open = openState && !disabled // the menu can become disabled while open (selection cleared)
   const wrapRef = useRef<HTMLDivElement>(null)
   const buttonRef = useRef<HTMLButtonElement>(null)
@@ -36,13 +50,38 @@ export function ActionsMenu({ label, disabled, disabledHint, actions, iconOnly =
     const onDown = (e: MouseEvent) => {
       if (!wrapRef.current?.contains(e.target as Node)) setOpen(false)
     }
+    // A fixed menu would drift away from its trigger on scroll/resize; close it instead.
+    const onMove = (e: Event) => {
+      if (!(e.target instanceof Node && wrapRef.current?.contains(e.target))) setOpen(false)
+    }
     document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
+    window.addEventListener('scroll', onMove, true)
+    window.addEventListener('resize', onMove)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      window.removeEventListener('scroll', onMove, true)
+      window.removeEventListener('resize', onMove)
+    }
   }, [open])
 
+  function place() {
+    const r = buttonRef.current?.getBoundingClientRect()
+    if (!r) return
+    const height = actions.length * ITEM_HEIGHT + 12
+    const up = r.bottom + height > window.innerHeight && r.top > height
+    const vertical: CSSProperties = up ? { bottom: window.innerHeight - r.top + 4 } : { top: r.bottom + 4 }
+    const alignRight = iconOnly || r.left + 220 > window.innerWidth
+    // Right-aligned would run off the left edge (narrow rail next to the preview): open rightwards instead.
+    const fitsLeft = r.right - MENU_WIDTH >= 8
+    const horizontal: CSSProperties =
+      alignRight && fitsLeft ? { right: window.innerWidth - r.right } : { left: Math.max(8, Math.min(r.left, window.innerWidth - MENU_WIDTH - 8)) }
+    setPosition({ ...vertical, ...horizontal })
+  }
+
   function openAt(index: number) {
+    place()
     setOpen(true)
-    requestAnimationFrame(() => itemRefs.current[index]?.focus())
+    requestAnimationFrame(() => itemRefs.current[index]?.focus({ preventScroll: true }))
   }
 
   function close(returnFocus: boolean) {
@@ -82,7 +121,7 @@ export function ActionsMenu({ label, disabled, disabledHint, actions, iconOnly =
       <button
         ref={buttonRef}
         type="button"
-        className={iconOnly ? 'icon-button' : 'btn btn-secondary'}
+        className={triggerClassName ?? (iconOnly ? 'icon-button' : 'btn btn-secondary')}
         aria-label={iconOnly ? label : undefined}
         aria-haspopup="menu"
         aria-expanded={open}
@@ -92,17 +131,17 @@ export function ActionsMenu({ label, disabled, disabledHint, actions, iconOnly =
         onClick={() => (open ? close(false) : openAt(0))}
         onKeyDown={onButtonKey}
       >
-        {iconOnly ? (
-          <Ellipsis size={16} aria-hidden="true" />
-        ) : (
-          <>
-            {label}
-            <ChevronDown size={15} aria-hidden="true" />
-          </>
-        )}
+        {iconOnly
+          ? (icon ?? <EllipsisVertical size={16} aria-hidden="true" />)
+          : (children ?? (
+              <>
+                {label}
+                <ChevronDown size={15} aria-hidden="true" />
+              </>
+            ))}
       </button>
       {open && (
-        <div id={menuId} role="menu" aria-label={label} className={`menu${iconOnly ? ' menu-right' : ''}`} onKeyDown={onMenuKey}>
+        <div id={menuId} role="menu" aria-label={label} className="menu" style={position} onKeyDown={onMenuKey}>
           {actions.map((a, i) => (
             <button
               key={a.key}

@@ -57,7 +57,7 @@ function ProfileForm({ username, onProfileUpdated }: Props) {
 
   return (
     <form className="admin-form" onSubmit={submit} aria-labelledby="profile-details-title">
-      <h3 id="profile-details-title">Profile</h3>
+      <h3 id="profile-details-title">Your details</h3>
       <p className="admin-form-hint">Signed in as {username}</p>
       <div className="admin-form-row">
         <label>
@@ -155,7 +155,10 @@ function PasswordForm() {
 
 export function ProfilePage({ username, onProfileUpdated }: Props) {
   return (
-    <section className="folder">
+    <section className="folder" aria-labelledby="profile-heading">
+      <div className="page-head">
+        <h1 id="profile-heading">Profile</h1>
+      </div>
       <div className="sheet admin-sheet profile-sheet">
         <ProfileForm username={username} onProfileUpdated={onProfileUpdated} />
         <PasswordForm />

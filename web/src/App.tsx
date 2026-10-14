@@ -2,15 +2,20 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, CSSProperties, FormEvent } from 'react'
 import { api, type AuthUser, type NodeDto, type Workspace } from './api'
 import { LoginForm } from './LoginForm'
-import { SearchBar, Topbar } from './components/Topbar'
+import { Sidebar, type View } from './components/Sidebar'
+import { Topbar } from './components/Topbar'
 import { Breadcrumbs } from './components/Breadcrumbs'
 import { Toolbar } from './components/Toolbar'
+import { SelectionBar } from './components/SelectionBar'
 import { FileTable } from './components/FileTable'
+import { DetailsPanel } from './components/DetailsPanel'
 import { AdministrationPage } from './components/AdministrationPage'
 import { ProfilePage } from './components/ProfilePage'
 import { TasksPage } from './components/TasksPage'
-import { ActivityPanel } from './components/ActivityPanel'
+import { ActivityList } from './components/ActivityPanel'
+import { WorkspaceOverview } from './components/WorkspaceOverview'
 import { useTaskActivity } from './hooks/useTaskActivity'
+import { useRecentDocuments, type RecentDocument } from './hooks/useRecentDocuments'
 import { PreviewPane, RATIO_MAX, RATIO_MIN } from './components/PreviewPane'
 import { ConfirmDialog } from './components/ConfirmDialog'
 import { MergeDialog } from './components/MergeDialog'
@@ -20,7 +25,9 @@ import type { MenuAction } from './components/ActionsMenu'
 import { ErrorToast } from './components/ErrorToast'
 import { Spinner } from './components/Spinner'
 import { EmptyState } from './components/EmptyState'
-import { Copy, FileStack, FolderInput, FolderOpen, Trash2 } from 'lucide-react'
+import { downloadNodes } from './download'
+import { apiErrorMessage } from './formatters'
+import { Copy, Download, FileStack, FolderInput, FolderOpen, Trash2 } from 'lucide-react'
 import './App.css'
 
 interface Crumb {
@@ -28,7 +35,7 @@ interface Crumb {
   name: string
 }
 
-type View = 'workspace' | 'tasks' | 'browse' | 'admin' | 'profile'
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
 
 const PREVIEW_RATIO_KEY = 'zapis.previewRatio'
 
@@ -50,15 +57,18 @@ function App() {
   const [searchResults, setSearchResults] = useState<NodeDto[] | null>(null)
   const [bulkDialog, setBulkDialog] = useState<'merge' | 'copy' | 'move' | 'delete' | null>(null)
   const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null)
-  // The preview belongs to the listing it was opened from; it closes when view, folder or search results change.
+  // The selected file belongs to the listing it was opened from; it closes when view, folder or search results change.
+  // It shows in the details panel, and in the full preview pane once opened from there.
   const [preview, setPreview] = useState<{
     id: string
     view: View
     folderId: string
     searchResults: NodeDto[] | null
   } | null>(null)
-  // A document opened from a task; it takes over the preview pane until closed or the user leaves the Workspace view.
-  const [taskPreview, setTaskPreview] = useState<NodeDto | null>(null)
+  const [previewFull, setPreviewFull] = useState(false)
+  // A document opened from a task or the "Recently opened" card; it takes over the preview pane until closed
+  // or the user leaves the view it was opened from.
+  const [docPreview, setDocPreview] = useState<{ node: NodeDto; view: View } | null>(null)
   const [previewFiles, setPreviewFiles] = useState<NodeDto[]>([])
   const [previewRatio, setPreviewRatio] = useState(() => {
     const saved = Number(localStorage.getItem(PREVIEW_RATIO_KEY))
@@ -79,6 +89,8 @@ function App() {
   const taskActivity = useTaskActivity(username)
   const refreshTaskActivity = taskActivity.refresh
   const resetTaskActivity = taskActivity.reset
+  const recentDocs = useRecentDocuments(username)
+  const addRecentDoc = recentDocs.add
 
   // Admins' "Documents" view starts at their Home folder; the Workspace view starts at the workspace's document library.
   const baseRoot: Crumb | null = view === 'workspace' ? (workspace?.rootId ? { id: workspace.rootId, name: workspace.name } : null) : ROOT
@@ -136,7 +148,7 @@ function App() {
     setSearchResults(null)
     setPath([])
     setRootOverride(null)
-    setTaskPreview(null)
+    setDocPreview(null)
     setView(next)
   }
 
@@ -152,11 +164,12 @@ function App() {
   }
 
   async function handleLogout() {
-    await api.logout()
+    // Leave the app even if the request fails; a stale server session is better than a dead "Sign out" button.
+    await api.logout().catch(() => {})
     setUsername(null)
     setFirstName('')
     setIsAdmin(false)
-    setTaskPreview(null)
+    setDocPreview(null)
     setPendingTaskId(null)
     resetTaskActivity()
     setPath([])
@@ -234,6 +247,8 @@ function App() {
 
   const uploadFiles = useCallback((files: File[]) => uploadFilesTo(currentFolder.id, files), [uploadFilesTo, currentFolder.id])
 
+  const pickFiles = useCallback(() => fileInputRef.current?.click(), [])
+
   async function handleUploadInput(e: ChangeEvent<HTMLInputElement>) {
     const files = e.target.files
     if (!files || files.length === 0) return
@@ -263,7 +278,7 @@ function App() {
   async function handleDelete(node: NodeDto) {
     try {
       await api.deleteNode(node.id)
-      if (preview?.id === node.id) closePreview()
+      if (preview?.id === node.id) closeDetails()
       await loadFolder(currentFolder.id)
     } catch (err) {
       setError(String(err))
@@ -287,7 +302,7 @@ function App() {
     setError(null)
     try {
       await (kind === 'copy' ? api.copyNode(node.id, targetId) : api.moveNode(node.id, targetId))
-      if (kind === 'move' && preview?.id === node.id) closePreview()
+      if (kind === 'move' && preview?.id === node.id) closeDetails()
       setSelected(new Set())
       setRowDialog(null)
       await loadFolder(currentFolder.id)
@@ -305,6 +320,8 @@ function App() {
       setSearchResults(null)
       return
     }
+    // Search is global (top bar); results show in the Workspace listing unless a document view is already open.
+    if (view !== 'workspace' && view !== 'browse') handleNavigate('workspace')
     setLoading(true)
     setError(null)
     try {
@@ -374,13 +391,27 @@ function App() {
   const selectedNodes = displayedNodes.filter((n) => selected.has(n.id))
   const allFilesSelected = selectedNodes.every((n) => n.isFile)
   const progressLabel = (verb: string) => (bulkProgress ? `${verb} ${bulkProgress.done} of ${bulkProgress.total}…` : `${verb}…`)
+  const selectedFileIds = selectedNodes.filter((n) => n.isFile).map((n) => n.id)
+  // Copy/move/merge/delete pick or refresh the browsed folder, so search results only offer Download.
   const bulkActions: MenuAction[] = [
-    ...(allFilesSelected
-      ? [{ key: 'merge', label: 'Merge to PDF', icon: <FileStack size={15} aria-hidden="true" />, onSelect: () => setBulkDialog('merge') }]
-      : []),
-    { key: 'copy', label: 'Copy to…', icon: <Copy size={15} aria-hidden="true" />, onSelect: () => setBulkDialog('copy') },
-    { key: 'move', label: 'Move to…', icon: <FolderInput size={15} aria-hidden="true" />, onSelect: () => setBulkDialog('move') },
-    { key: 'delete', label: 'Delete', icon: <Trash2 size={15} aria-hidden="true" />, danger: true, onSelect: () => setBulkDialog('delete') },
+    {
+      key: 'download',
+      label: 'Download',
+      icon: <Download size={15} aria-hidden="true" />,
+      disabled: selectedFileIds.length === 0,
+      hint: 'Folders can’t be downloaded',
+      onSelect: () => downloadNodes(selectedFileIds),
+    },
+    ...(searchResults
+      ? []
+      : [
+          ...(allFilesSelected && selectedNodes.length > 1
+            ? [{ key: 'merge', label: 'Merge to PDF', icon: <FileStack size={15} aria-hidden="true" />, onSelect: () => setBulkDialog('merge') }]
+            : []),
+          { key: 'copy', label: 'Copy', icon: <Copy size={15} aria-hidden="true" />, onSelect: () => setBulkDialog('copy') },
+          { key: 'move', label: 'Move', icon: <FolderInput size={15} aria-hidden="true" />, onSelect: () => setBulkDialog('move') },
+          { key: 'delete', label: 'Delete', icon: <Trash2 size={15} aria-hidden="true" />, danger: true, onSelect: () => setBulkDialog('delete') },
+        ]),
   ]
   const previewInScope =
     preview !== null &&
@@ -388,22 +419,47 @@ function App() {
     preview.folderId === currentFolder.id &&
     preview.searchResults === searchResults
   const previewId = previewInScope ? preview.id : null
-  const previewNode = previewId ? (previewFiles.find((f) => f.id === previewId) ?? null) : null
-  const showingTasks = view === 'tasks'
-  const taskPreviewNode = showingTasks ? taskPreview : null
-  const paneNode = taskPreviewNode ?? (browsing ? previewNode : null)
+  const previewNode = browsing && previewId ? (previewFiles.find((f) => f.id === previewId) ?? null) : null
+  const docPreviewNode = docPreview?.view === view ? docPreview.node : null
+  const paneNode = docPreviewNode ?? (previewFull ? previewNode : null)
+  const detailsNode = docPreviewNode ? null : previewNode
   const previewOpen = paneNode !== null
+  /** Closing the full preview returns to the details panel; closing a task/recent document closes it entirely. */
   const closePreview = useCallback(() => {
+    setPreviewFull(false)
+    setDocPreview(null)
+  }, [])
+  const closeDetails = useCallback(() => {
     setPreview(null)
-    setTaskPreview(null)
+    setPreviewFull(false)
   }, [])
   const selectPreview = useCallback(
     (n: NodeDto) => {
-      setTaskPreview(null)
+      setDocPreview(null)
       setPreview({ id: n.id, view, folderId: currentFolder.id, searchResults })
+      addRecentDoc(n)
     },
-    [view, currentFolder.id, searchResults],
+    [view, currentFolder.id, searchResults, addRecentDoc],
   )
+
+  async function openRecent(doc: RecentDocument) {
+    try {
+      const node = await api.getNode(doc.id)
+      setPreview(null)
+      setDocPreview({ node, view })
+      addRecentDoc(node)
+    } catch (e) {
+      recentDocs.remove(doc.id)
+      setError(`Couldn’t open ${doc.name}. ${apiErrorMessage(e)}`)
+    }
+  }
+
+  const userDisplayName = (() => {
+    const name = taskActivity.displayNameOf(username ?? '')
+    return name && name !== username ? name : firstName || username || ''
+  })()
+  const canUploadHere = browsing && !searchResults
+  const companyName = workspace?.exists ? workspace.name : ''
 
   if (!authChecked) {
     return (
@@ -422,125 +478,172 @@ function App() {
       className={`shell${previewOpen ? ' has-preview' : ''}`}
       style={{ '--preview-ratio': previewRatio } as CSSProperties}
     >
-      <Topbar username={username} isAdmin={isAdmin} view={view} taskBadge={taskActivity.badgeCount} onNavigate={handleNavigate} onLogout={handleLogout} />
+      <Sidebar
+        displayName={userDisplayName}
+        isAdmin={isAdmin}
+        companyName={companyName}
+        view={view}
+        taskBadge={taskActivity.badgeCount}
+        onNavigate={handleNavigate}
+        onLogout={handleLogout}
+      />
 
-      <main className="main">
-        {view !== 'admin' && view !== 'profile' && view !== 'tasks' && (
-          <SearchBar
-            searchQuery={searchQuery}
-            hasSearchResults={!!searchResults}
-            onSearchQueryChange={setSearchQuery}
-            onSearchSubmit={handleSearch}
-            onClearSearch={clearSearch}
-          />
-        )}
-
-        {error && <ErrorToast message={error} onDismiss={() => setError(null)} />}
-
-        {view === 'workspace' && !searchResults && (
-          <ActivityPanel
-            username={username}
-            firstName={firstName}
-            activity={taskActivity}
-            onOpenTasks={openTasks}
-            onError={setError}
-          />
-        )}
-
-        {view === 'tasks' ? (
-          <TasksPage
-            username={username}
-            assignees={taskActivity.assignees}
-            nameOf={taskActivity.nameOf}
-            pendingTaskId={pendingTaskId}
-            onPendingConsumed={clearPendingTask}
-            pickerRoot={workspace?.rootId ? { id: workspace.rootId, name: workspace.name } : null}
-            activePreviewId={taskPreviewNode?.id ?? null}
-            onPreview={(node) => {
-              setPreview(null)
-              setTaskPreview(node)
-            }}
-            onError={setError}
-          />
-        ) : view === 'profile' ? (
-          <ProfilePage username={username} onProfileUpdated={() => {}} />
-        ) : view === 'admin' ? (
-          isAdmin ? <AdministrationPage workspace={workspace} onWorkspaceCreated={setWorkspace} /> : null
-        ) : !root ? (
-          <section className="folder">
-            <div className="sheet">
-              {workspace === null ? (
-                <div className="admin-placeholder">
-                  <Spinner size={22} label="Loading workspace…" />
-                </div>
-              ) : (
-                <EmptyState
-                  icon={FolderOpen}
-                  title="The workspace isn't set up yet"
-                  description={
-                    isAdmin
-                      ? 'Open Administration and design the folder structure to get started.'
-                      : 'Ask an administrator to set up the workspace.'
-                  }
-                />
-              )}
-            </div>
-          </section>
-        ) : (
-          <section className="folder">
-            <Breadcrumbs
-              breadcrumb={breadcrumb}
-              searchResults={searchResults ? { query: searchQuery, count: searchResults.length } : null}
-              onNavigate={goToBreadcrumb}
-              onClearSearch={clearSearch}
+      <div className="content">
+        <Topbar
+          searchQuery={searchQuery}
+          hasSearchResults={!!searchResults}
+          onSearchQueryChange={setSearchQuery}
+          onSearchSubmit={handleSearch}
+          onClearSearch={clearSearch}
+          notificationCount={taskActivity.badgeCount}
+          notifications={(close) => (
+            <ActivityList
+              activity={taskActivity}
+              onOpenTasks={(id) => {
+                close()
+                openTasks(id)
+              }}
+              onError={setError}
             />
+          )}
+          onUpload={canUploadHere ? pickFiles : null}
+          uploadHint={searchResults ? 'Clear the search to upload into a folder' : 'Open a folder in the Workspace to upload'}
+          onNewFolder={canUploadHere && isAdmin ? handleNewFolder : null}
+          newFolderHint={isAdmin ? 'Open a folder to create a folder in it' : 'Only administrators can create folders'}
+        />
+        <input type="file" multiple ref={fileInputRef} hidden onChange={handleUploadInput} aria-hidden="true" tabIndex={-1} />
 
-            <div className="sheet">
-              <Toolbar
-                fileInputRef={fileInputRef}
-                disabled={!!searchResults}
-                refreshing={loading}
-                canCreateFolder={isAdmin}
-                selectedCount={selectedNodes.length}
-                bulkActions={bulkActions}
-                onUpload={handleUploadInput}
-                onNewFolder={handleNewFolder}
-                onRefresh={() => loadFolder(currentFolder.id)}
-              />
+        <main className="main">
+          {error && <ErrorToast message={error} onDismiss={() => setError(null)} />}
 
-              <FileTable
-                nodes={displayedNodes}
-                loading={loading}
-                selected={selected}
-                isSearchView={!!searchResults}
-                searchQuery={searchQuery}
-                onToggleSelected={toggleSelected}
-                onToggleAll={toggleAll}
-                canSelectFolders={isAdmin}
-                onOpenFolder={openFolder}
-                getLocation={searchResults ? locationLabel : undefined}
-                onOpenLocation={(n) => openLocation(n, false)}
-                onPreview={selectPreview}
-                activeId={previewOpen && !taskPreviewNode ? previewId : null}
-                onFilesOrdered={setPreviewFiles}
-                onDelete={setNodeToDelete}
-                canDeleteFolders={isAdmin}
-                canManageFolders={isAdmin}
-                onRename={(node) => setRowDialog({ kind: 'rename', node })}
-                onCopy={(node) => setRowDialog({ kind: 'copy', node })}
-                onMove={(node) => setRowDialog({ kind: 'move', node })}
-                onDropFiles={uploadFiles}
-              />
-            </div>
-          </section>
-        )}
-      </main>
+          {view === 'workspace' && !searchResults && (
+            <WorkspaceOverview
+              name={firstName || userDisplayName}
+              activity={taskActivity}
+              recent={recentDocs.docs}
+              onOpenTasks={openTasks}
+              onOpenRecent={openRecent}
+            />
+          )}
+
+          {view === 'tasks' ? (
+            <TasksPage
+              username={username}
+              assignees={taskActivity.assignees}
+              nameOf={taskActivity.nameOf}
+              pendingTaskId={pendingTaskId}
+              onPendingConsumed={clearPendingTask}
+              pickerRoot={workspace?.rootId ? { id: workspace.rootId, name: workspace.name } : null}
+              activePreviewId={docPreviewNode?.id ?? null}
+              onPreview={(node) => {
+                setPreview(null)
+                setDocPreview({ node, view: 'tasks' })
+              }}
+              onError={setError}
+            />
+          ) : view === 'profile' ? (
+            <ProfilePage username={username} onProfileUpdated={() => {}} />
+          ) : view === 'admin' ? (
+            isAdmin ? <AdministrationPage workspace={workspace} onWorkspaceCreated={setWorkspace} /> : null
+          ) : !root ? (
+            <section className="folder">
+              <div className="sheet">
+                {workspace === null ? (
+                  <div className="admin-placeholder">
+                    <Spinner size={22} label="Loading workspace…" />
+                  </div>
+                ) : (
+                  <EmptyState
+                    icon={FolderOpen}
+                    title="The workspace isn't set up yet"
+                    description={
+                      isAdmin
+                        ? 'Open Administration and design the folder structure to get started.'
+                        : 'Ask an administrator to set up the workspace.'
+                    }
+                  />
+                )}
+              </div>
+            </section>
+          ) : (
+            <section className="folder" aria-label="Files">
+              <div className="folder-head">
+                <Breadcrumbs
+                  breadcrumb={breadcrumb}
+                  searchResults={searchResults ? { query: searchQuery, count: searchResults.length } : null}
+                  onNavigate={goToBreadcrumb}
+                  onClearSearch={clearSearch}
+                />
+                {!searchResults && (
+                  <Toolbar
+                    refreshing={loading}
+                    canCreateFolder={isAdmin}
+                    onUpload={pickFiles}
+                    onNewFolder={handleNewFolder}
+                    onRefresh={() => loadFolder(currentFolder.id)}
+                  />
+                )}
+              </div>
+
+              {selectedNodes.length > 0 && (
+                <SelectionBar count={selectedNodes.length} actions={bulkActions} onClear={() => setSelected(new Set())} />
+              )}
+
+              <div className="folder-body">
+                <div className="sheet">
+                  <FileTable
+                    nodes={displayedNodes}
+                    loading={loading}
+                    selected={selected}
+                    isSearchView={!!searchResults}
+                    searchQuery={searchQuery}
+                    onToggleSelected={toggleSelected}
+                    onToggleAll={toggleAll}
+                    canSelectFolders={isAdmin}
+                    onOpenFolder={openFolder}
+                    getLocation={searchResults ? locationLabel : undefined}
+                    onOpenLocation={(n) => openLocation(n, false)}
+                    onPreview={(n) => {
+                      // A click in the list keeps the full preview if it is open, otherwise shows the details panel.
+                      if (!previewOpen) setPreviewFull(false)
+                      selectPreview(n)
+                    }}
+                    activeId={docPreviewNode ? null : previewId}
+                    onFilesOrdered={setPreviewFiles}
+                    ownerNameOf={taskActivity.displayNameOf}
+                    folderName={currentFolder.name}
+                    onUploadClick={pickFiles}
+                    onDelete={setNodeToDelete}
+                    canDeleteFolders={isAdmin}
+                    canManageFolders={isAdmin}
+                    onRename={(node) => setRowDialog({ kind: 'rename', node })}
+                    onCopy={(node) => setRowDialog({ kind: 'copy', node })}
+                    onMove={(node) => setRowDialog({ kind: 'move', node })}
+                    onDropFiles={uploadFiles}
+                  />
+                </div>
+
+                {detailsNode && !previewOpen && (
+                  <DetailsPanel
+                    key={detailsNode.id}
+                    node={detailsNode}
+                    ownerName={detailsNode.createdByUser ? taskActivity.displayNameOf(detailsNode.createdByUser) : ''}
+                    location={searchResults ? locationLabel(detailsNode) : breadcrumb.map((c) => c.name).join(' / ')}
+                    onOpen={() => setPreviewFull(true)}
+                    onClose={closeDetails}
+                  />
+                )}
+              </div>
+            </section>
+          )}
+        </main>
+      </div>
 
       {paneNode && (
         <PreviewPane
           key={paneNode.id}
           node={paneNode}
-          files={taskPreviewNode ? [taskPreviewNode] : previewFiles}
+          files={docPreviewNode ? [docPreviewNode] : previewFiles}
           ratio={previewRatio}
           onRatioChange={changePreviewRatio}
           expanded={previewExpanded}
@@ -596,7 +699,7 @@ function App() {
 
       {browsing && !searchResults && root && (bulkDialog === 'copy' || bulkDialog === 'move') && (
         <FolderPickerDialog
-          title={`${bulkDialog === 'copy' ? 'Copy' : 'Move'} ${selectedNodes.length} items to…`}
+          title={`${bulkDialog === 'copy' ? 'Copy' : 'Move'} ${plural(selectedNodes.length, 'item')} to…`}
           confirmLabel={bulkDialog === 'copy' ? 'Copy here' : 'Move here'}
           busyLabel={progressLabel(bulkDialog === 'copy' ? 'Copying' : 'Moving')}
           busy={bulkProgress !== null}
@@ -613,8 +716,8 @@ function App() {
 
       {browsing && !searchResults && bulkDialog === 'delete' && (
         <ConfirmDialog
-          title={`Delete ${selectedNodes.length} items?`}
-          message={`${selectedNodes.length} selected items will be deleted${selectedNodes.some((n) => n.isFolder) ? ', including everything inside any folders' : ''}.`}
+          title={`Delete ${plural(selectedNodes.length, 'item')}?`}
+          message={`${plural(selectedNodes.length, 'selected item')} will be deleted${selectedNodes.some((n) => n.isFolder) ? ', including everything inside any folders' : ''}.`}
           confirmLabel="Delete"
           busyLabel={progressLabel('Deleting')}
           onConfirm={() => runBulk((n) => api.deleteNode(n.id))}

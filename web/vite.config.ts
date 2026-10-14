@@ -5,6 +5,9 @@ import { defineConfig } from 'vite'
 export default defineConfig({
   plugins: [react()],
   server: {
+    // The API's CORS only allows http://localhost:5173; silently moving to 5174 would break every API call.
+    port: 5173,
+    strictPort: true,
     proxy: {
       // Dev-time proxy to the Spring Boot API, so the browser only ever
       // talks to one origin and CORS never comes up during development.

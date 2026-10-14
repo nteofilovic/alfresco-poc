@@ -22,9 +22,24 @@ export function formatBytes(bytes: number | null): string {
   return `${value.toFixed(1)} ${units[i]}`
 }
 
-export function formatDate(iso: string | null): string {
+const pad2 = (n: number) => String(n).padStart(2, '0')
+
+/** Swiss calendar date, dd.MM.yyyy. */
+function swissDay(d: Date): string {
+  return `${pad2(d.getDate())}.${pad2(d.getMonth() + 1)}.${d.getFullYear()}`
+}
+
+/** Timestamp in Swiss format (dd.MM.yyyy HH:mm), with "Today, 09:12" / "Yesterday, 22:17" for recent ones. */
+export function formatDate(iso: string | null, now = new Date()): string {
   if (!iso) return '—'
-  return new Date(iso).toLocaleString()
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '—'
+  const time = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+  const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()
+  const days = Math.round((startOfDay(now) - startOfDay(d)) / 86_400_000)
+  if (days === 0) return `Today, ${time}`
+  if (days === 1) return `Yesterday, ${time}`
+  return `${swissDay(d)} ${time}`
 }
 
 /** Parses a date-only string ("2026-10-15") as a local calendar day, anything else as a timestamp. */
@@ -37,7 +52,7 @@ function parseDay(value: string): Date {
 export function formatDay(value: string | null): string {
   if (!value) return '—'
   const d = parseDay(value)
-  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+  return Number.isNaN(d.getTime()) ? '—' : swissDay(d)
 }
 
 /** True when the due day is before today (an open task due today is not yet overdue). */
@@ -51,8 +66,21 @@ export function isOverdue(dueDate: string | null, now = new Date()): boolean {
 
 /** Today as yyyy-MM-dd in local time, for <input type="date" min>. */
 export function todayInputValue(now = new Date()): string {
-  const p = (n: number) => String(n).padStart(2, '0')
-  return `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`
+  return `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`
+}
+
+/** "Good morning/afternoon/evening" for the Workspace greeting. */
+export function greeting(now = new Date()): string {
+  const h = now.getHours()
+  return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'
+}
+
+/** Two-letter avatar initials: "Nenad Teofilovic" -> "NT", "admin" -> "AD". */
+export function initials(name: string): string {
+  const words = name.trim().split(/\s+/).filter(Boolean)
+  if (words.length === 0) return '?'
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase()
+  return (words[0][0] + words[words.length - 1][0]).toUpperCase()
 }
 
 export type FileKind = 'pdf' | 'word' | 'excel' | 'image' | 'folder' | 'file'
@@ -74,6 +102,31 @@ export function kindFor(name: string, isFolder: boolean): FileKind {
   if (isFolder) return 'folder'
   const ext = name.split('.').pop()?.toLowerCase() ?? ''
   return KINDS[ext] ?? 'file'
+}
+
+/** Short type badge text, e.g. "PDF", "XLSX"; empty for folders and extensionless files. */
+export function extensionBadge(name: string): string {
+  const dot = name.lastIndexOf('.')
+  if (dot <= 0 || dot === name.length - 1) return ''
+  return name.slice(dot + 1).toUpperCase().slice(0, 4)
+}
+
+const TYPE_LABELS: Record<FileKind, string> = {
+  folder: 'Folder',
+  pdf: 'PDF document',
+  word: 'Word document',
+  excel: 'Excel spreadsheet',
+  image: 'Image',
+  file: 'File',
+}
+
+/** Human-readable type, e.g. "Excel spreadsheet" or "TIFF image". */
+export function typeLabel(name: string, isFolder: boolean): string {
+  const kind = kindFor(name, isFolder)
+  const ext = extensionBadge(name)
+  if (kind === 'image' && ext) return `${ext === 'JPG' ? 'JPEG' : ext} image`
+  if (kind === 'file' && ext) return `${ext} file`
+  return TYPE_LABELS[kind]
 }
 
 /** handle() in api.ts formats errors as "<status> <statusText>: <json body>" - surface the API's message if present. */

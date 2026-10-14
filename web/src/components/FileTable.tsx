@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent } from 'react'
-import { ArrowDown, ArrowUp, ArrowUpDown, ChevronRight, Copy, Download, FolderInput, FolderOpen, Pencil, SearchX, Trash2, UploadCloud } from 'lucide-react'
-import { api, type NodeDto } from '../api'
-import { formatBytes, formatDate, isStructureFolder, kindFor } from '../formatters'
-import { FileIcon } from './FileIcon'
+import { ArrowDown, ArrowUp, ArrowUpDown, Copy, Download, Eye, FolderInput, FolderOpen, Pencil, SearchX, Trash2, Upload, UploadCloud } from 'lucide-react'
+import type { NodeDto } from '../api'
+import { downloadNodes } from '../download'
+import { formatBytes, formatDate, initials, isStructureFolder, typeLabel } from '../formatters'
+import { FileTile } from './FileIcon'
 import { EmptyState } from './EmptyState'
 import { ActionsMenu, type MenuAction } from './ActionsMenu'
 
-type SortKey = 'name' | 'createdAt' | 'modifiedAt' | 'sizeInBytes'
+type SortKey = 'name' | 'modifiedAt' | 'owner' | 'sizeInBytes'
 type SortDir = 'asc' | 'desc'
 
 interface Props {
@@ -24,10 +25,16 @@ interface Props {
   /** Search view only: where a hit lives, plus a way to jump there. */
   getLocation?: (node: NodeDto) => string
   onOpenLocation: (node: NodeDto) => void
+  /** Shows the file's details panel. */
   onPreview: (node: NodeDto) => void
   activeId: string | null
   /** Reports the listed files in display (sorted) order, for previous/next navigation. */
   onFilesOrdered: (files: NodeDto[]) => void
+  /** Display name for a username (owner column). */
+  ownerNameOf: (username: string) => string
+  /** Name of the folder drops upload into (drop zone copy). */
+  folderName: string
+  onUploadClick: () => void
   onDelete: (node: NodeDto) => void
   canDeleteFolders: boolean
   /** Admins may rename/copy/move folders; everyone may do so for files. */
@@ -40,8 +47,8 @@ interface Props {
 
 const COLUMNS: { key: SortKey; label: string }[] = [
   { key: 'name', label: 'Name' },
-  { key: 'createdAt', label: 'Created' },
   { key: 'modifiedAt', label: 'Modified' },
+  { key: 'owner', label: 'Owner' },
   { key: 'sizeInBytes', label: 'Size' },
 ]
 
@@ -60,6 +67,9 @@ export function FileTable({
   onPreview,
   activeId,
   onFilesOrdered,
+  ownerNameOf,
+  folderName,
+  onUploadClick,
   onDelete,
   canDeleteFolders,
   canManageFolders,
@@ -82,6 +92,8 @@ export function FileTable({
     }
   }
 
+  const ownerOf = (n: NodeDto) => (n.createdByUser ? ownerNameOf(n.createdByUser) : '')
+
   const sorted = useMemo(() => {
     const copy = [...nodes]
     copy.sort((a, b) => {
@@ -90,20 +102,27 @@ export function FileTable({
       let cmp = 0
       if (sortKey === 'name') {
         cmp = a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
-      } else if (sortKey === 'createdAt') {
-        cmp = (a.createdAt ?? '').localeCompare(b.createdAt ?? '')
       } else if (sortKey === 'modifiedAt') {
         cmp = (a.modifiedAt ?? '').localeCompare(b.modifiedAt ?? '')
+      } else if (sortKey === 'owner') {
+        const owner = (n: NodeDto) => (n.createdByUser ? ownerNameOf(n.createdByUser) : '')
+        cmp = owner(a).localeCompare(owner(b), undefined, { sensitivity: 'base' })
       } else {
         cmp = (a.sizeInBytes ?? -1) - (b.sizeInBytes ?? -1)
       }
       return sortDir === 'asc' ? cmp : -cmp
     })
     return copy
-  }, [nodes, sortKey, sortDir])
+  }, [nodes, sortKey, sortDir, ownerNameOf])
 
   function rowActions(node: NodeDto): MenuAction[] {
     const actions: MenuAction[] = []
+    if (node.isFile) {
+      actions.push(
+        { key: 'details', label: 'Details', icon: <Eye size={15} aria-hidden="true" />, onSelect: () => onPreview(node) },
+        { key: 'download', label: 'Download', icon: <Download size={15} aria-hidden="true" />, onSelect: () => downloadNodes([node.id]) },
+      )
+    }
     if (node.isFile || canManageFolders) {
       const structure = isStructureFolder(node)
       actions.push({
@@ -203,163 +222,175 @@ export function FileTable({
     >
       {dragActive && !isSearchView && (
         <div className="drop-overlay" aria-hidden="true">
-          <UploadCloud size={36} />
-          <p>Drop files to upload</p>
+          <UploadCloud size={32} />
+          <p>Drop to upload to {folderName}</p>
         </div>
       )}
 
-      <table className="node-table">
-        <thead>
-          <tr>
-            <th className="col-check">
-              {!isSearchView && selectable.length > 0 && (
-                <input
-                  type="checkbox"
-                  ref={selectAllRef}
-                  checked={allSelected}
-                  onChange={() => onToggleAll(selectable.map((n) => n.id), !allSelected)}
-                  aria-label="Select all"
-                />
-              )}
-            </th>
-            {COLUMNS.map((col) => (
-              <th key={col.key} className={`col-${col.key}`}>
-                <button
-                  type="button"
-                  className="sort-button"
-                  onClick={() => toggleSort(col.key)}
-                  aria-label={`Sort by ${col.label}`}
-                >
-                  {col.label}
-                  {sortKey === col.key ? (
-                    sortDir === 'asc' ? (
-                      <ArrowUp size={13} aria-hidden="true" />
-                    ) : (
-                      <ArrowDown size={13} aria-hidden="true" />
-                    )
-                  ) : (
-                    <ArrowUpDown size={13} className="sort-icon-idle" aria-hidden="true" />
-                  )}
-                </button>
+      <div className="table-scroll">
+        <table className="node-table">
+          <thead>
+            <tr>
+              <th className="col-check">
+                {!isSearchView && selectable.length > 0 && (
+                  <input
+                    type="checkbox"
+                    ref={selectAllRef}
+                    checked={allSelected}
+                    onChange={() => onToggleAll(selectable.map((n) => n.id), !allSelected)}
+                    aria-label="Select all"
+                  />
+                )}
               </th>
-            ))}
-            <th className="col-actions"></th>
-          </tr>
-        </thead>
-        <tbody>
-          {loading &&
-            Array.from({ length: 6 }).map((_, i) => (
-              <tr key={`skeleton-${i}`} className="skeleton-row">
-                <td>
-                  <div className="skeleton skeleton-checkbox" />
-                </td>
-                <td>
-                  <div className="skeleton skeleton-name" />
-                </td>
-                <td>
-                  <div className="skeleton skeleton-text" />
-                </td>
-                <td>
-                  <div className="skeleton skeleton-text-sm" />
-                </td>
-                <td></td>
-              </tr>
-            ))}
+              {COLUMNS.map((col) => (
+                <th
+                  key={col.key}
+                  className={`col-${col.key}`}
+                  aria-sort={sortKey === col.key ? (sortDir === 'asc' ? 'ascending' : 'descending') : undefined}
+                >
+                  <button type="button" className="sort-button" onClick={() => toggleSort(col.key)}>
+                    {col.label}
+                    {sortKey === col.key ? (
+                      sortDir === 'asc' ? (
+                        <ArrowUp size={13} aria-hidden="true" />
+                      ) : (
+                        <ArrowDown size={13} aria-hidden="true" />
+                      )
+                    ) : (
+                      <ArrowUpDown size={13} className="sort-icon-idle" aria-hidden="true" />
+                    )}
+                  </button>
+                </th>
+              ))}
+              <th className="col-actions">
+                <span className="sr-only">Actions</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading &&
+              Array.from({ length: 6 }).map((_, i) => (
+                <tr key={`skeleton-${i}`} className="skeleton-row">
+                  <td className="col-check">
+                    <div className="skeleton skeleton-checkbox" />
+                  </td>
+                  <td>
+                    <div className="skeleton-name-cell">
+                      <div className="skeleton skeleton-tile" />
+                      <div className="skeleton skeleton-name" />
+                    </div>
+                  </td>
+                  <td>
+                    <div className="skeleton skeleton-text" />
+                  </td>
+                  <td>
+                    <div className="skeleton skeleton-text" />
+                  </td>
+                  <td>
+                    <div className="skeleton skeleton-text-sm" />
+                  </td>
+                  <td></td>
+                </tr>
+              ))}
 
-          {!loading &&
-            sorted.map((node) => (
-              <tr
-                key={node.id}
-                className={`${selected.has(node.id) ? 'selected' : ''}${node.id === activeId ? ' previewing' : ''}`}
-              >
-                <td className="col-check">
-                  {(node.isFile || canSelectFolders) && (
-                    <input
-                      type="checkbox"
-                      checked={selected.has(node.id)}
-                      onChange={() => onToggleSelected(node.id)}
-                      aria-label={`Select ${node.name}`}
+            {!loading &&
+              sorted.map((node) => {
+                const owner = ownerOf(node)
+                const actions = rowActions(node)
+                return (
+                  <tr
+                    key={node.id}
+                    className={`${selected.has(node.id) ? 'selected' : ''}${node.id === activeId ? ' previewing' : ''}`}
+                  >
+                    <td className="col-check">
+                      {(node.isFile || canSelectFolders) && (
+                        <input
+                          type="checkbox"
+                          checked={selected.has(node.id)}
+                          onChange={() => onToggleSelected(node.id)}
+                          aria-label={`Select ${node.name}`}
+                        />
+                      )}
+                    </td>
+                    <td className="col-name">
+                      <div className="name-cell">
+                        <FileTile name={node.name} isFolder={node.isFolder} />
+                        <div className="name-stack">
+                          <button
+                            type="button"
+                            className="name-link"
+                            onClick={() => (node.isFolder ? onOpenFolder(node) : onPreview(node))}
+                            aria-current={node.id === activeId ? 'true' : undefined}
+                          >
+                            {node.name}
+                          </button>
+                          {getLocation ? (
+                            <button
+                              type="button"
+                              className="search-location"
+                              onClick={() => onOpenLocation(node)}
+                              title="Open containing folder"
+                            >
+                              {getLocation(node)}
+                            </button>
+                          ) : (
+                            <span className="name-sub">{typeLabel(node.name, node.isFolder)}</span>
+                          )}
+                        </div>
+                      </div>
+                    </td>
+                    <td className="col-modifiedAt">{formatDate(node.modifiedAt)}</td>
+                    <td className="col-owner">
+                      {owner ? (
+                        <span className="owner">
+                          <span className="avatar avatar-muted avatar-xs" aria-hidden="true">
+                            {initials(owner)}
+                          </span>
+                          <span className="owner-name">{owner}</span>
+                        </span>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
+                    <td className="col-sizeInBytes">{node.isFile ? formatBytes(node.sizeInBytes) : '—'}</td>
+                    <td className="col-actions">
+                      {actions.length > 0 && (
+                        <ActionsMenu iconOnly label={`More actions for ${node.name}`} disabled={false} actions={actions} />
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+
+            {!loading && sorted.length === 0 && (
+              <tr className="empty-row">
+                <td colSpan={6}>
+                  {isSearchView ? (
+                    <EmptyState
+                      icon={SearchX}
+                      title="No results found"
+                      description={`Nothing matched "${searchQuery}". Try a different search term.`}
+                    />
+                  ) : (
+                    <EmptyState
+                      icon={FolderOpen}
+                      title="This folder is empty"
+                      description="Upload a file, or drop files onto this list."
                     />
                   )}
                 </td>
-                <td className="name-cell">
-                  <FileIcon kind={kindFor(node.name, node.isFolder)} />
-                  <div className="name-stack">
-                  {node.isFolder ? (
-                    <button type="button" className="link folder-link" onClick={() => onOpenFolder(node)}>
-                      {node.name}
-                      <ChevronRight size={15} className="folder-link-chevron" aria-hidden="true" />
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      className="link"
-                      onClick={() => onPreview(node)}
-                      aria-current={node.id === activeId ? 'true' : undefined}
-                    >
-                      {node.name}
-                    </button>
-                  )}
-                  {getLocation && (
-                    <button
-                      type="button"
-                      className="search-location"
-                      onClick={() => onOpenLocation(node)}
-                      title="Open containing folder"
-                    >
-                      {getLocation(node)}
-                    </button>
-                  )}
-                  </div>
-                </td>
-                <td className="col-createdAt">
-                  <span>{formatDate(node.createdAt)}</span>
-                  {node.createdByUser && <span className="created-by">by {node.createdByUser}</span>}
-                </td>
-                <td className="col-modifiedAt">{formatDate(node.modifiedAt)}</td>
-                <td className="col-sizeInBytes">{node.isFile ? formatBytes(node.sizeInBytes) : '—'}</td>
-                <td className="col-actions">
-                  <div className="row-actions">
-                    {node.isFile && (
-                      <a
-                        className="icon-button"
-                        href={api.downloadUrl(node.id)}
-                        download
-                        aria-label={`Download ${node.name}`}
-                        title={`Download ${node.name}`}
-                      >
-                        <Download size={16} aria-hidden="true" />
-                      </a>
-                    )}
-                    {rowActions(node).length > 0 && (
-                      <ActionsMenu iconOnly label={`Actions for ${node.name}`} disabled={false} actions={rowActions(node)} />
-                    )}
-                  </div>
-                </td>
               </tr>
-            ))}
+            )}
+          </tbody>
+        </table>
+      </div>
 
-          {!loading && sorted.length === 0 && (
-            <tr className="empty-row">
-              <td colSpan={6}>
-                {isSearchView ? (
-                  <EmptyState
-                    icon={SearchX}
-                    title="No results found"
-                    description={`Nothing matched "${searchQuery}". Try a different search term.`}
-                  />
-                ) : (
-                  <EmptyState
-                    icon={FolderOpen}
-                    title="No documents here yet"
-                    description="Upload a file or drag and drop it anywhere in this list to get started."
-                  />
-                )}
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+      {!isSearchView && (
+        <button type="button" className="drop-zone" onClick={onUploadClick}>
+          <Upload size={18} strokeWidth={1.8} aria-hidden="true" />
+          Drop files anywhere to upload to {folderName}
+        </button>
+      )}
     </div>
   )
 }
