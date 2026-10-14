@@ -11,8 +11,13 @@ the only thing that knows Alfresco's REST API shapes, credentials and internal n
 
 It demonstrates: browse/upload/download/delete of documents and folders, full-text search (Solr-backed),
 merge-to-PDF across mixed formats (PDF/Word/Excel/JPEG/PNG/TIFF), custom Alfresco aspect/property
-metadata updates, and creating an Alfresco Collaboration Site with a caller-supplied folder-structure
-template.
+metadata updates, and Spaces: business areas of a company (Clients, Suppliers, Finance...), each one an
+Alfresco Collaboration Site created by an admin with a member list. A space starts empty: members fill it by
+creating folders from admin-designed **folder templates** (Client, Property, Owner...) in the folder they
+are browsing.
+
+App navigation is **Home / Spaces / Tasks / Administration**. Who sees which space and document is decided
+by Alfresco itself (site membership + ACLs), because content calls run with the logged-in user's ticket.
 
 ## Commands
 
@@ -45,25 +50,37 @@ There is no test suite in `web/` currently.
 
 Three-layer separation, in call order `controller -> service (AlfrescoService) -> service (AlfrescoClient)`:
 
-- **`service/AlfrescoClient`** — thin, deliberately "dumb" wrapper around Alfresco's public Core & Search
-  REST APIs. Returns raw Jackson `JsonNode`s. Holds two `RestClient`s: `core` (`.../alfresco/versions/1`)
-  and `search` (`.../search/versions/1`). This is the *only* place that knows Alfresco's URL shapes —
-  nothing above it does.
+- **`service/AlfrescoClient`** — thin, deliberately "dumb" wrapper around Alfresco's public Core, Search
+  and Workflow REST APIs. Returns raw Jackson `JsonNode`s. This is the *only* place that knows Alfresco's
+  URL shapes. It is not a bean itself: `config/AlfrescoClientConfig` builds two instances — the `@Primary`
+  **user** client (authenticated per request with the logged-in user's ticket) and
+  `@Qualifier("serviceAlfrescoClient")` (the shared service account). Use the service one only for what a
+  regular user cannot do: create sites/people, list all people, manage site members, drive the workflow engine.
 - **`service/AlfrescoService`** — maps `AlfrescoClient`'s raw JSON onto the app's own DTOs; holds business
   logic (e.g. resolving folder-template paths, site setup).
 - **`service/DocumentMergeService`** — PDF merge logic: converts Office formats to PDF via Alfresco's own
   Transform Service (LibreOffice-backed, called through `AlfrescoClient`), places images directly onto PDF
   pages with PDFBox. Multi-page TIFFs only contribute their first page.
-- **`service/WorkspaceService`** — the single "Workspace" Share site (`zapis-workspace`) whose document
-  library holds the admin-designed folder tree. `findInWorkspace(nodeId)` is how scope is checked.
+- **`service/SpaceService`** — Spaces = Share sites. Lists the caller's spaces (`GET /api/spaces`, their own
+  ticket), admin create / delete / members (service account).
+  Default visibility is PRIVATE, so non-members cannot read; PUBLIC/MODERATED sites are readable by everyone.
+- **`service/FolderTemplateService`** — folder templates (name + fixed subfolder tree), global to all spaces,
+  stored as one JSON file `Company Home/zapis-config/folder-templates.json` (service account). Admin CRUD at
+  `/api/admin/folder-templates`, list at `GET /api/folder-templates`. Members instantiate with
+  `POST /api/nodes/{parentId}/from-template` (`AlfrescoService.createFromTemplate`, user ticket): the top
+  folder gets `cm:description = zapis-template:<name>` (`TEMPLATE_MARK`, members may rename/move/delete it),
+  its subfolders get `STRUCTURE_MARK` (locked for non-admins).
+- **`service/TaskService`** — tasks on Alfresco's `activitiAdhoc` workflow (driven by the service account).
+  A task carries its space (`zapisSiteId` variable, derived from the first attachment if not given) and each
+  attachment is flagged `accessible` using the *user's* ticket, so non-members see "no access", not the name.
 - **`controller/`** — `NodeController` (browse/upload/download/preview/rename/move/copy/delete/metadata),
-  `SearchController`, `MergeController`, `SiteController`, `AuthController` (login/logout/me),
-  `ProfileController` (own profile + password), `WorkspaceController` (`GET /api/workspace`,
-  admin `POST /api/admin/workspace`), `AdminUserController` (`/api/admin/users`).
-- **`config/`** — `RestClientConfig` builds the two Alfresco `RestClient`s (HTTP Basic auth with the
-  shared service account from `alfresco.username/password`, Apache HttpClient 5); `AlfrescoProperties`
-  is the typed `alfresco.*` config; `CorsConfig` reads `app.cors.allowed-origins` **and registers all
-  interceptors** (see below).
+  `SearchController` (all spaces, optional `siteId`), `MergeController`, `SpaceController` (`GET /api/spaces`,
+  admin `/api/admin/spaces` + members), `AuthController` (login/logout/me), `ProfileController` (own
+  profile + password), `AdminUserController` (`/api/admin/users`), `TaskController`.
+- **`config/`** — `RestClientConfig` builds the service `RestClient`s (HTTP Basic, service account from
+  `alfresco.username/password`) and the per-user ones (interceptor adds `Basic ROLE_TICKET:<ticket>` from
+  `UserTicketContext`); `AlfrescoProperties` is the typed `alfresco.*` config; `CorsConfig` reads
+  `app.cors.allowed-origins` **and registers all interceptors** (see below).
 - **`exception/GlobalExceptionHandler`** — translates `AlfrescoApiException` (and friends) into HTTP
   responses; this is where Alfresco error shapes get normalized for the frontend.
 - Config: `api/src/main/resources/application.yml` — Alfresco base URL/credentials, `default-parent-id`
@@ -71,26 +88,34 @@ Three-layer separation, in call order `controller -> service (AlfrescoService) -
 
 ### Auth and access control (cross-cutting, spans several files)
 
-Login is `POST /api/auth/login`: credentials are validated against Alfresco, then stored as HTTP-session
-attributes (`AuthController.SESSION_*`: user, isAdmin, firstName). Every later Alfresco call is made as
-the **shared service account**, not the logged-in user — so the interceptors are the *only* authorization:
-- `AuthInterceptor` — `/api/**` except `/api/auth/**` needs a logged-in session (401).
+Login is `POST /api/auth/login`: credentials are exchanged with Alfresco for a **login ticket**
+(`POST /authentication/versions/1/tickets`), stored in the HTTP session with user, isAdmin, firstName
+(`AuthController.SESSION_*`). Content calls then run **as that user**, so Alfresco's ACLs decide who can
+read or write what; the interceptors only add what ACLs don't express:
+- `AuthInterceptor` — `/api/**` except `/api/auth/**` needs a session with a ticket (401) and puts the
+  ticket in `UserTicketContext` (thread-local) for the request; it must stay registered before the others.
 - `AdminInterceptor` — `/api/admin/**` needs an admin session (403).
-- `WorkspaceScopeInterceptor` — `/api/nodes/**` for non-admins: node must be inside the workspace library,
-  and non-admins cannot create/delete/rename/move/copy folders or use `/recent` / `/root/children`.
-  Controllers like `SearchController`/`MergeController` also check the admin session flag themselves.
+- `WorkspaceScopeInterceptor` (name is historical) — `/api/nodes/**` for non-admins: no plain folder
+  creation and no folder delete/rename/move/copy unless it is the top folder of a template instance
+  (`TEMPLATE_MARK`); no `/recent`, `/root/children` or `-my-`/`-root-` aliases.
+- `GlobalExceptionHandler` — an Alfresco 401 (expired ticket) invalidates the session and returns 401.
 
-When adding an endpoint, decide which of these apply; path variables must be named `nodeId` or `parentId`
-for the scope interceptor to find them. CORS has `allowCredentials(true)` so the session cookie flows.
+When adding an endpoint, decide whether it needs the user client (default) or the service client; path
+variables must be named `nodeId` or `parentId` for the scope interceptor to find them. CORS has
+`allowCredentials(true)` so the session cookie flows.
 
 ### Web layer (`web/src/`)
 
 Small, no router/state-library yet:
 - **`api.ts`** — typed fetch wrapper around the Spring Boot API; this is the single point of contact with
   the backend. Add new backend calls here, not ad-hoc `fetch`s in components.
-- **`App.tsx`** — top-level UI: login gate (`LoginForm`), breadcrumb folder browser, upload, search,
-  merge-to-PDF selection, split-view preview. Views like `AdministrationPage` (workspace builder, user
-  management) and `ProfilePage` live in `components/`.
+- **`App.tsx`** — top-level UI: login gate (`LoginForm`), views `home | spaces | tasks | admin | profile`
+  (`Sidebar.View`), and inside a space the breadcrumb folder browser, upload, merge-to-PDF selection,
+  split-view preview. Search is global (all spaces the user can read). `HomePage`, `SpacesPage`,
+  `TasksPage` (one list of all the user's tasks, space chip + filter), `AdministrationPage`
+  (tabs Spaces | Users; Spaces tab = `SpacesAdmin` + `FolderTemplatesAdmin`, Users tab = `UsersAdmin`) and
+  `ProfilePage` live in `components/`. The Topbar "New" menu lists one "New <template>" entry per folder
+  template (`NewFromTemplateDialog`).
 - **`formatters.ts`** — display formatting helpers (dates, sizes, etc.).
 - Dev server proxies `/api` to `http://localhost:8081` (see `vite.config.ts`) — components call relative
   `/api/...` paths, never the Alfresco host directly.
@@ -103,9 +128,13 @@ Local development only — Community has no official clustering/HA. Default Alfr
 
 ## POC simplifications to keep in mind
 
-- The API talks to Alfresco as one shared `admin` service account; per-user identity exists only in the
-  Spring session, and workspace scoping is enforced in the API (see Auth section), not by Alfresco ACLs.
-- There is no test suite in `api/` either (no `src/test`), so `mvn test` currently runs nothing.
+- Workflow/task calls and admin operations still use the shared `admin` service account; the real task
+  creator is kept in a process variable and task visibility is enforced in `TaskService`.
+- Only a few API unit tests exist (`api/src/test`); there is no integration suite. Per-user access was
+  verified by hand against a live stack (two users, one space each, task with a cross-space attachment).
+- The ticket lives in the in-memory HTTP session, so restarting the API logs everyone out. The existing
+  `zapis-workspace` site (PUBLIC) appears as a space that every user can read; change its visibility or
+  members in Share if that is not wanted.
 - No AMPs or custom content model are installed; the metadata endpoint (`PUT /api/nodes/{id}/metadata`)
   only works with Alfresco's stock aspects (e.g. `cm:titled`) until a real content model is added.
 
