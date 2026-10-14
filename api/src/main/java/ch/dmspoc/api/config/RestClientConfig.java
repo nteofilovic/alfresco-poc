@@ -1,5 +1,6 @@
 package ch.dmspoc.api.config;
 
+import ch.dmspoc.api.exception.AlfrescoApiException;
 import org.apache.hc.client5.http.config.ConnectionConfig;
 import org.apache.hc.client5.http.impl.classic.HttpClients;
 import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManagerBuilder;
@@ -13,11 +14,13 @@ import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 
 /**
- * Two RestClients, both pre-authenticated with HTTP Basic auth against the
- * same Alfresco instance, but pointed at its two separate REST API roots:
- * the Core API (nodes, sites, renditions...) and the Search API.
- * Everything the app knows about the Alfresco content store goes through
- * these two beans (see AlfrescoClient).
+ * Two families of RestClients against the same Alfresco instance (see AlfrescoClientConfig):
+ * <ul>
+ *   <li>service clients, pre-authenticated with the shared service account, for admin-only
+ *       operations (sites, people) and for the workflow engine;</li>
+ *   <li>user clients, authenticated per request with the logged-in user's ticket, for everything
+ *       that touches content, so Alfresco's ACLs apply to the real user.</li>
+ * </ul>
  */
 @Configuration
 public class RestClientConfig {
@@ -59,6 +62,54 @@ public class RestClientConfig {
                 .baseUrl(props.baseUrl() + "/alfresco/api/-default-/public/alfresco/versions/1")
                 .requestFactory(requestFactory)
                 .build();
+    }
+
+    // ---- per-user clients: same Alfresco APIs, but authenticated with the logged-in user's ticket
+
+    @Bean
+    public RestClient userCoreRestClient(AlfrescoProperties props) {
+        return userBuilder().baseUrl(props.baseUrl() + "/alfresco/api/-default-/public/alfresco/versions/1").build();
+    }
+
+    @Bean
+    public RestClient userSearchRestClient(AlfrescoProperties props) {
+        return userBuilder().baseUrl(props.baseUrl() + "/alfresco/api/-default-/public/search/versions/1").build();
+    }
+
+    @Bean
+    public RestClient userWorkflowRestClient(AlfrescoProperties props) {
+        return userBuilder().baseUrl(props.baseUrl() + "/alfresco/api/-default-/public/workflow/versions/1").build();
+    }
+
+    /** Authentication API: issues and revokes login tickets. Callers supply their own credentials. */
+    @Bean
+    public RestClient alfrescoAuthRestClient(AlfrescoProperties props) {
+        var requestFactory = new HttpComponentsClientHttpRequestFactory(HttpClients.custom()
+                .setConnectionManager(connectionManagerWithTimeout())
+                .build());
+        return RestClient.builder()
+                .baseUrl(props.baseUrl() + "/alfresco/api/-default-/public/authentication/versions/1")
+                .requestFactory(requestFactory)
+                .build();
+    }
+
+    /** Alfresco accepts a ticket as the password of the pseudo-user ROLE_TICKET. */
+    public static String ticketAuthHeader(String ticket) {
+        return "Basic " + Base64.getEncoder().encodeToString(("ROLE_TICKET:" + ticket).getBytes(StandardCharsets.UTF_8));
+    }
+
+    private RestClient.Builder userBuilder() {
+        var requestFactory = new HttpComponentsClientHttpRequestFactory(HttpClients.custom()
+                .setConnectionManager(connectionManagerWithTimeout())
+                .build());
+        return RestClient.builder()
+                .requestFactory(requestFactory)
+                .requestInterceptor((request, body, execution) -> {
+                    String ticket = UserTicketContext.get();
+                    if (ticket == null) throw new AlfrescoApiException(401, "No user ticket for this request");
+                    request.getHeaders().set("Authorization", ticketAuthHeader(ticket));
+                    return execution.execute(request, body);
+                });
     }
 
     private RestClient.Builder builder(AlfrescoProperties props) {

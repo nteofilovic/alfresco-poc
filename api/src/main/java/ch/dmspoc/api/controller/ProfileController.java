@@ -5,6 +5,7 @@ import ch.dmspoc.api.dto.UpdateProfileRequest;
 import ch.dmspoc.api.service.AlfrescoClient;
 import jakarta.servlet.http.HttpSession;
 import jakarta.validation.Valid;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -32,7 +33,7 @@ public class ProfileController {
     private final AlfrescoClient alfrescoClient;
     private final RestClient alfrescoAuthProbeRestClient;
 
-    public ProfileController(AlfrescoClient alfrescoClient, RestClient alfrescoAuthProbeRestClient) {
+    public ProfileController(@Qualifier("serviceAlfrescoClient") AlfrescoClient alfrescoClient, RestClient alfrescoAuthProbeRestClient) {
         this.alfrescoClient = alfrescoClient;
         this.alfrescoAuthProbeRestClient = alfrescoAuthProbeRestClient;
     }

@@ -4,10 +4,7 @@ import ch.dmspoc.api.config.AlfrescoProperties;
 import ch.dmspoc.api.dto.CreateFolderRequest;
 import ch.dmspoc.api.dto.NodeDto;
 import ch.dmspoc.api.dto.UpdateMetadataRequest;
-import ch.dmspoc.api.exception.AlfrescoApiException;
 import ch.dmspoc.api.service.AlfrescoService;
-import ch.dmspoc.api.service.WorkspaceService;
-import jakarta.servlet.http.HttpSession;
 import jakarta.validation.Valid;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.HttpHeaders;
@@ -28,12 +25,10 @@ public class NodeController {
 
     private final AlfrescoService alfrescoService;
     private final AlfrescoProperties props;
-    private final WorkspaceService workspaceService;
 
-    public NodeController(AlfrescoService alfrescoService, AlfrescoProperties props, WorkspaceService workspaceService) {
+    public NodeController(AlfrescoService alfrescoService, AlfrescoProperties props) {
         this.alfrescoService = alfrescoService;
         this.props = props;
-        this.workspaceService = workspaceService;
     }
 
     @GetMapping("/{nodeId}")
@@ -65,6 +60,20 @@ public class NodeController {
         return alfrescoService.createFolder(parentId, request.name());
     }
 
+    public record FromTemplateRequest(
+            @jakarta.validation.constraints.NotBlank String templateId,
+            @jakarta.validation.constraints.NotBlank
+            @jakarta.validation.constraints.Pattern(regexp = "[^\\\\/*?:\"<>|]+", message = "must not contain \\ / * ? : \" < > |")
+            String name) {
+    }
+
+    /** Members create a Client, Property... here: a folder from an admin-designed template, in {@code parentId}. */
+    @PostMapping("/{parentId}/from-template")
+    @org.springframework.web.bind.annotation.ResponseStatus(org.springframework.http.HttpStatus.CREATED)
+    public NodeDto createFromTemplate(@PathVariable String parentId, @Valid @RequestBody FromTemplateRequest request) {
+        return alfrescoService.createFromTemplate(parentId, request.templateId(), request.name());
+    }
+
     public record TargetRequest(@jakarta.validation.constraints.NotBlank String targetParentId) {
     }
 
@@ -79,24 +88,15 @@ public class NodeController {
         return alfrescoService.renameNode(nodeId, request.name());
     }
 
+    // The destination is in the body; Alfresco checks the user's permission on it.
     @PostMapping("/{nodeId}/move")
-    public NodeDto move(@PathVariable String nodeId, @Valid @RequestBody TargetRequest request, HttpSession session) {
-        requireTargetInWorkspace(request.targetParentId(), session);
+    public NodeDto move(@PathVariable String nodeId, @Valid @RequestBody TargetRequest request) {
         return alfrescoService.moveNode(nodeId, request.targetParentId());
     }
 
     @PostMapping("/{nodeId}/copy")
-    public NodeDto copy(@PathVariable String nodeId, @Valid @RequestBody TargetRequest request, HttpSession session) {
-        requireTargetInWorkspace(request.targetParentId(), session);
+    public NodeDto copy(@PathVariable String nodeId, @Valid @RequestBody TargetRequest request) {
         return alfrescoService.copyNode(nodeId, request.targetParentId());
-    }
-
-    /** The interceptor confines the source node; the destination is in the body, so non-admins are checked here. */
-    private void requireTargetInWorkspace(String targetParentId, HttpSession session) {
-        if (Boolean.TRUE.equals(session.getAttribute(AuthController.SESSION_ADMIN_ATTR))) return;
-        if (workspaceService.findInWorkspace(targetParentId).isEmpty()) {
-            throw new AlfrescoApiException(403, "Outside the workspace");
-        }
     }
 
     @PostMapping(value = "/{parentId}/files", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)

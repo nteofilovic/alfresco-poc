@@ -9,7 +9,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.MultipartBodyBuilder;
-import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
 import java.time.Duration;
@@ -22,8 +21,10 @@ import java.util.Map;
  * these onto the app's own DTOs. Keeping this layer "dumb" means the whole
  * REST surface (nodes, sites, renditions, search) is reachable from one
  * place, and nothing above this class needs to know Alfresco's URL shapes.
+ *
+ * <p>Not a bean itself: AlfrescoClientConfig builds a per-user instance (the primary one) and a
+ * service-account instance, from differently authenticated RestClients.
  */
-@Component
 public class AlfrescoClient {
 
     private static final Logger log = LoggerFactory.getLogger(AlfrescoClient.class);
@@ -277,6 +278,37 @@ public class AlfrescoClient {
         return get("/sites", mapOf("skipCount", skip, "maxItems", maxItems));
     }
 
+    /** Sites the calling user is a member of (with their role in each). */
+    public JsonNode listMySites(int maxItems) {
+        return get("/people/-me-/sites", mapOf("maxItems", maxItems));
+    }
+
+    public JsonNode listSiteMembers(String siteId) {
+        return get("/sites/" + enc(siteId) + "/members", mapOf("maxItems", 1000));
+    }
+
+    /** @param role SiteManager | SiteCollaborator | SiteContributor | SiteConsumer */
+    public JsonNode addSiteMember(String siteId, String personId, String role) {
+        ObjectNode body = mapper.createObjectNode();
+        body.put("id", personId);
+        body.put("role", role);
+        return post("/sites/" + enc(siteId) + "/members", body);
+    }
+
+    public JsonNode updateSiteMember(String siteId, String personId, String role) {
+        ObjectNode body = mapper.createObjectNode();
+        body.put("role", role);
+        return put("/sites/" + enc(siteId) + "/members/" + enc(personId), body);
+    }
+
+    public void removeSiteMember(String siteId, String personId) {
+        core.delete()
+                .uri("/sites/" + enc(siteId) + "/members/" + enc(personId))
+                .retrieve()
+                .onStatus(HttpStatusCode::isError, this::handleError)
+                .toBodilessEntity();
+    }
+
     // ---------------------------------------------------------------- people
 
     public JsonNode createPerson(String id, String firstName, String lastName, String email, String password) {
@@ -339,9 +371,11 @@ public class AlfrescoClient {
         ObjectNode body = mapper.createObjectNode();
         ObjectNode query = body.putObject("query");
         String afts = "(cm:name:\"*" + safeTerm + "*\" OR TEXT:\"" + safeTerm + "\")";
-        if (siteId != null) {
-            afts += " AND PATH:\"/app:company_home/st:sites/cm:" + siteId + "//*\"";
-        }
+        // Only content that lives in a space (Share site); Alfresco itself filters by the user's permissions.
+        String sitePath = siteId != null
+                ? "/app:company_home/st:sites/cm:" + siteId.replaceAll("[^a-zA-Z0-9_-]", "") + "//*"
+                : "/app:company_home/st:sites//*";
+        afts += " AND PATH:\"" + sitePath + "\"";
         query.put("query", afts);
         query.put("language", "afts");
         body.putArray("include").add("path"); // ancestors, so the UI can show where a hit lives
@@ -362,7 +396,7 @@ public class AlfrescoClient {
     public JsonNode recentFiles(int maxItems) {
         ObjectNode body = mapper.createObjectNode();
         ObjectNode query = body.putObject("query");
-        query.put("query", "TYPE:\"cm:content\"");
+        query.put("query", "TYPE:\"cm:content\" AND PATH:\"/app:company_home/st:sites//*\"");
         query.put("language", "afts");
         ObjectNode sortEntry = mapper.createObjectNode();
         sortEntry.put("type", "FIELD");
