@@ -1,4 +1,4 @@
-import { File, FileImage, FileSpreadsheet, FileText, Folder } from 'lucide-react'
+import { File, FileImage, FileSpreadsheet, FileText, Folder, Shapes } from 'lucide-react'
 import { extensionBadge, kindFor, type FileKind } from '../formatters'
 
 interface TileProps {
@@ -6,14 +6,16 @@ interface TileProps {
   isFolder: boolean
   /** 'md' is the 36px list tile, 'sm' the compact badge used in cards. */
   size?: 'sm' | 'md'
+  /** A folder made from a folder template (Client, Property...): shown in the space's tone instead of amber. */
+  templateInstance?: boolean
 }
 
 /** Rounded type tile: an amber folder, or the file extension on a colour keyed to its kind. */
-export function FileTile({ name, isFolder, size = 'md' }: TileProps) {
-  const kind = kindFor(name, isFolder)
+export function FileTile({ name, isFolder, size = 'md', templateInstance = false }: TileProps) {
+  const kind = templateInstance ? 'template' : kindFor(name, isFolder)
   return (
     <span className={`file-tile file-tile-${size} file-tile-${kind}`} aria-hidden="true">
-      {isFolder ? <Folder size={size === 'md' ? 18 : 14} fill="currentColor" strokeWidth={0} /> : extensionBadge(name) || 'FILE'}
+      {templateInstance ? <Shapes size={size === 'md' ? 18 : 14} strokeWidth={2} /> : isFolder ? <Folder size={size === 'md' ? 18 : 14} fill="currentColor" strokeWidth={0} /> : extensionBadge(name) || 'FILE'}
     </span>
   )
 }

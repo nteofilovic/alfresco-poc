@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, CSSProperties, FormEvent } from 'react'
-import { api, type AuthUser, type FolderTemplate, type NodeDto, type Space } from './api'
+import { api, type AuthUser, type FolderTemplate, type NodeDto, type NodeSortDir, type NodeSortKey, type Space } from './api'
 import { LoginForm } from './LoginForm'
 import { Sidebar, type View } from './components/Sidebar'
 import { Topbar } from './components/Topbar'
@@ -8,6 +8,8 @@ import { Breadcrumbs } from './components/Breadcrumbs'
 import { Toolbar } from './components/Toolbar'
 import { SelectionBar } from './components/SelectionBar'
 import { FileTable } from './components/FileTable'
+import { Pager } from './components/Pager'
+import { PAGE_SIZES } from './paging'
 import { DetailsPanel } from './components/DetailsPanel'
 import { AdministrationPage } from './components/AdministrationPage'
 import { ProfilePage } from './components/ProfilePage'
@@ -15,8 +17,9 @@ import { TasksPage } from './components/TasksPage'
 import { ActivityList } from './components/ActivityPanel'
 import { HomePage } from './components/HomePage'
 import { SpacesPage } from './components/SpacesPage'
+import { NewFolderDialog } from './components/NewFolderDialog'
 import { NewFromTemplateDialog } from './components/NewFromTemplateDialog'
-import { SpaceMark } from './components/SpaceMark'
+import { SpaceHero } from './components/SpaceHero'
 import { spaceColor } from './spaceColor'
 import { useTaskActivity } from './hooks/useTaskActivity'
 import { useRecentDocuments, type RecentDocument } from './hooks/useRecentDocuments'
@@ -30,7 +33,8 @@ import { ErrorToast } from './components/ErrorToast'
 import { Spinner } from './components/Spinner'
 import { downloadNodes } from './download'
 import { apiErrorMessage } from './formatters'
-import { ArrowLeft, Copy, Download, FileStack, FolderInput, Trash2 } from 'lucide-react'
+import { ComparePreview } from './components/ComparePreview'
+import { Columns2, Copy, Download, FileStack, FolderInput, Trash2 } from 'lucide-react'
 import './App.css'
 
 interface Crumb {
@@ -41,6 +45,17 @@ interface Crumb {
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
 
 const PREVIEW_RATIO_KEY = 'zapis.previewRatio'
+const PAGE_SIZE_KEY = 'zapis.pageSize'
+const DEFAULT_PAGE_SIZE = 20
+
+function savedPageSize(): number {
+  try {
+    const saved = Number(localStorage.getItem(PAGE_SIZE_KEY))
+    return (PAGE_SIZES as readonly number[]).includes(saved) ? saved : DEFAULT_PAGE_SIZE
+  } catch {
+    return DEFAULT_PAGE_SIZE
+  }
+}
 
 function App() {
   const [authChecked, setAuthChecked] = useState(false)
@@ -52,8 +67,25 @@ function App() {
   const [currentSpace, setCurrentSpace] = useState<Space | null>(null)
   const [templates, setTemplates] = useState<FolderTemplate[]>([])
   const [templateToCreate, setTemplateToCreate] = useState<FolderTemplate | null>(null)
+  const [creatingFolder, setCreatingFolder] = useState(false)
+  const [comparing, setComparing] = useState(false)
   const [nodes, setNodes] = useState<NodeDto[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  // Server-side paging of the browsed folder (page is zero-based).
+  const [pageSize, setPageSize] = useState(savedPageSize)
+  const [page, setPage] = useState(0)
+  const [sortKey, setSortKey] = useState<NodeSortKey>('name')
+  const [sortDir, setSortDir] = useState<NodeSortDir>('asc')
+  const [totalItems, setTotalItems] = useState(0)
+  const [pagedFolderId, setPagedFolderId] = useState('')
+  // Latest paging inputs for loadFolder (refresh, upload, delete... reload whatever page is showing) and a
+  // counter so only the newest request may update the list.
+  const pagingRef = useRef({ page: 0, pageSize: DEFAULT_PAGE_SIZE, sortKey: 'name' as NodeSortKey, sortDir: 'asc' as NodeSortDir })
+  const loadSeq = useRef(0)
+  // Row of the freshly merged PDF, marked for ~2s.
+  const [highlightedId, setHighlightedId] = useState<string | null>(null)
+  const highlightTimer = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(highlightTimer.current), [])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
@@ -100,17 +132,43 @@ function App() {
   const breadcrumb = root ? [root, ...path] : []
   const currentFolder: Crumb = breadcrumb[breadcrumb.length - 1] ?? { id: '', name: '' }
 
-  const loadFolder = useCallback(async (folderId: string) => {
+  // A different folder starts on its first page (adjusted during render so no request is made for the stale page).
+  if (pagedFolderId !== currentFolder.id) {
+    setPagedFolderId(currentFolder.id)
+    setPage(0)
+    setTotalItems(0)
+  }
+
+  useEffect(() => {
+    pagingRef.current = { page, pageSize, sortKey, sortDir }
+  }, [page, pageSize, sortKey, sortDir])
+
+  /** Loads the page currently selected (or `target`), ignoring the result if a newer load started meanwhile. */
+  const loadFolder = useCallback(async (folderId: string, target?: number) => {
+    const seq = ++loadSeq.current
+    const p = target ?? pagingRef.current.page
+    const { pageSize: size, sortKey: by, sortDir: dir } = pagingRef.current
     setLoading(true)
     setError(null)
+    let reloading = false
     try {
-      const children = await api.listChildren(folderId)
-      setNodes(children)
+      const result = await api.listChildrenPage(folderId, { skip: p * size, maxItems: size, sortBy: by, sortDir: dir })
+      if (seq !== loadSeq.current) return
+      if (result.items.length === 0 && result.totalItems > 0 && p > 0) {
+        // The page emptied (e.g. its last items were deleted): fall back to the last page that still exists.
+        reloading = true
+        setTotalItems(result.totalItems)
+        setPage(Math.ceil(result.totalItems / size) - 1)
+        return
+      }
+      setNodes(result.items)
+      setTotalItems(result.totalItems)
       setSelected(new Set())
     } catch (e) {
-      setError(String(e))
+      if (seq === loadSeq.current) setError(String(e))
     } finally {
-      setLoading(false)
+      // When falling back, the page change triggers the next load, which owns the loading state.
+      if (seq === loadSeq.current && !reloading) setLoading(false)
     }
   }, [])
 
@@ -155,8 +213,24 @@ function App() {
 
   const browsing = view === 'spaces' && root !== null
   useEffect(() => {
-    if (username && browsing) loadFolder(currentFolder.id)
-  }, [username, browsing, currentFolder.id, loadFolder])
+    if (username && browsing && pagedFolderId === currentFolder.id) loadFolder(currentFolder.id)
+  }, [username, browsing, currentFolder.id, pagedFolderId, page, pageSize, sortKey, sortDir, loadFolder])
+
+  function changePageSize(size: number) {
+    try {
+      localStorage.setItem(PAGE_SIZE_KEY, String(size))
+    } catch {
+      // storage unavailable: the choice just lasts for this session
+    }
+    setPageSize(size)
+    setPage(0)
+  }
+
+  function changeSort(key: NodeSortKey, dir: NodeSortDir) {
+    setSortKey(key)
+    setSortDir(dir)
+    setPage(0)
+  }
 
   function handleNavigate(next: View) {
     if (next === 'admin' && !isAdmin) return
@@ -289,24 +363,12 @@ function App() {
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
-  const handleNewFolderIn = useCallback(
-    async (parentId: string) => {
-      const name = window.prompt('Folder name')
-      if (!name) return
-      setLoading(true)
-      try {
-        await api.createFolder(parentId, name)
-        if (parentId === currentFolder.id) await loadFolder(currentFolder.id)
-      } catch (err) {
-        setError(String(err))
-      } finally {
-        setLoading(false)
-      }
-    },
-    [currentFolder.id, loadFolder],
-  )
-
-  const handleNewFolder = useCallback(() => handleNewFolderIn(currentFolder.id), [handleNewFolderIn, currentFolder.id])
+  /** Throws on failure so the dialog can show the message inline. */
+  async function handleCreateFolder(name: string) {
+    await api.createFolder(currentFolder.id, name)
+    setCreatingFolder(false)
+    await loadFolder(currentFolder.id)
+  }
 
   async function handleDelete(node: NodeDto) {
     try {
@@ -389,23 +451,31 @@ function App() {
     })
   }
 
-  async function handleMerge(fileName: string) {
+  /** Selected files in the order the list shows (previewFiles is the table's sorted file order): the dialog's starting order. */
+  function mergeCandidates(): NodeDto[] {
+    const ordered = previewFiles.some((f) => selected.has(f.id)) ? previewFiles : displayedNodes
+    return ordered.filter((n) => selected.has(n.id))
+  }
+
+  async function handleMerge(fileName: string, orderedIds: string[]) {
     setBulkProgress({ done: 0, total: 1 })
     setError(null)
+    let mergedId: string | null = null
     try {
-      // Merge in the order the list shows (previewFiles is the table's sorted file order).
-      const ordered = previewFiles.some((f) => selected.has(f.id)) ? previewFiles : displayedNodes
-      await api.merge(
-        ordered.filter((n) => selected.has(n.id)).map((n) => n.id),
-        currentFolder.id,
-        fileName,
-      )
+      const merged = await api.merge(orderedIds, currentFolder.id, fileName)
+      mergedId = merged.id
     } catch (err) {
       setError(String(err))
     } finally {
       setBulkProgress(null)
       setBulkDialog(null)
       await loadFolder(currentFolder.id)
+    }
+    if (mergedId) {
+      // Briefly mark the new document's row once the reloaded list shows it.
+      window.clearTimeout(highlightTimer.current)
+      setHighlightedId(mergedId)
+      highlightTimer.current = window.setTimeout(() => setHighlightedId(null), 2000)
     }
   }
 
@@ -435,6 +505,7 @@ function App() {
   const displayedNodes = searchResults ?? nodes
   const selectedNodes = displayedNodes.filter((n) => selected.has(n.id))
   const allFilesSelected = selectedNodes.every((n) => n.isFile)
+  const canCompare = selectedNodes.length === 2 && allFilesSelected
   const progressLabel = (verb: string) => (bulkProgress ? `${verb} ${bulkProgress.done} of ${bulkProgress.total}…` : `${verb}…`)
   const selectedFileIds = selectedNodes.filter((n) => n.isFile).map((n) => n.id)
   // Copy/move/merge/delete pick or refresh the browsed folder, so search results only offer Download.
@@ -447,6 +518,9 @@ function App() {
       hint: 'Folders can’t be downloaded',
       onSelect: () => downloadNodes(selectedFileIds),
     },
+    ...(canCompare
+      ? [{ key: 'compare', label: 'Compare side by side', icon: <Columns2 size={15} aria-hidden="true" />, onSelect: () => setComparing(true) }]
+      : []),
     ...(searchResults
       ? []
       : [
@@ -505,7 +579,6 @@ function App() {
   })()
   // Viewers (site role SiteConsumer) can read but not add documents; Alfresco enforces it, this hides the buttons.
   const canWrite = isAdmin || currentSpace?.role !== 'SiteConsumer'
-  const canUploadHere = browsing && !searchResults && canWrite
   const companyName = ''
 
   if (!authChecked) {
@@ -530,12 +603,18 @@ function App() {
         isAdmin={isAdmin}
         companyName={companyName}
         view={view}
+        spaces={spaces ?? []}
+        currentSpaceId={currentSpace?.id ?? null}
+        onOpenSpace={openSpace}
         taskBadge={taskActivity.badgeCount}
         onNavigate={handleNavigate}
         onLogout={handleLogout}
       />
 
-      <div className="content">
+      <div
+        className={`content${view === 'spaces' && currentSpace ? ' in-space' : ''}`}
+        style={view === 'spaces' && currentSpace ? spaceColor(currentSpace.id) : undefined}
+      >
         <Topbar
           searchQuery={searchQuery}
           hasSearchResults={!!searchResults}
@@ -553,17 +632,6 @@ function App() {
               onError={setError}
             />
           )}
-          onUpload={canUploadHere ? pickFiles : null}
-          uploadHint={searchResults ? 'Clear the search to upload into a folder' : 'Open a space to upload'}
-          templates={templates}
-          onNewFromTemplate={
-            canUploadHere
-              ? (id) => setTemplateToCreate(templates.find((t) => t.id === id) ?? null)
-              : null
-          }
-          templateHint={searchResults ? 'Clear the search first' : 'Open a space to add one'}
-          onNewFolder={canUploadHere && isAdmin ? handleNewFolder : null}
-          newFolderHint={isAdmin ? 'Open a folder to create a folder in it' : 'Only administrators can create folders'}
         />
         <input type="file" multiple ref={fileInputRef} hidden onChange={handleUploadInput} aria-hidden="true" tabIndex={-1} />
 
@@ -606,17 +674,10 @@ function App() {
             <SpacesPage spaces={spaces} isAdmin={isAdmin} onOpen={openSpace} />
           ) : (
             <section className="folder" aria-label="Files">
+              {currentSpace && !searchResults && <SpaceHero space={currentSpace} onBack={() => handleNavigate('spaces')} />}
               <div className="folder-head">
-                {currentSpace && !searchResults && (
-                  <div className="space-banner" style={spaceColor(currentSpace.id)}>
-                    <SpaceMark id={currentSpace.id} title={currentSpace.title} size="sm" />
-                    <span className="space-banner-name">{currentSpace.title}</span>
-                    <button type="button" className="link link-accent space-back" onClick={() => handleNavigate('spaces')}>
-                      <ArrowLeft size={14} aria-hidden="true" /> All spaces
-                    </button>
-                  </div>
-                )}
                 <Breadcrumbs
+                  hideTitle={!!currentSpace && path.length === 0}
                   breadcrumb={breadcrumb}
                   searchResults={searchResults ? { query: searchQuery, count: searchResults.length } : null}
                   onNavigate={goToBreadcrumb}
@@ -625,10 +686,12 @@ function App() {
                 {!searchResults && (
                   <Toolbar
                     refreshing={loading}
-                    canCreateFolder={isAdmin}
+                    canCreateFolder={isAdmin || currentSpace?.role === 'SiteManager' || currentSpace?.role === 'SiteCollaborator'}
                     canUpload={canWrite}
+                    templates={templates}
                     onUpload={pickFiles}
-                    onNewFolder={handleNewFolder}
+                    onNewFolder={() => setCreatingFolder(true)}
+                    onNewFromTemplate={(id) => setTemplateToCreate(templates.find((t) => t.id === id) ?? null)}
                     onRefresh={() => loadFolder(currentFolder.id)}
                   />
                 )}
@@ -644,6 +707,7 @@ function App() {
                     nodes={displayedNodes}
                     loading={loading}
                     selected={selected}
+                    highlightedId={highlightedId}
                     isSearchView={!!searchResults}
                     searchQuery={searchQuery}
                     onToggleSelected={toggleSelected}
@@ -669,6 +733,20 @@ function App() {
                     onCopy={(node) => setRowDialog({ kind: 'copy', node })}
                     onMove={(node) => setRowDialog({ kind: 'move', node })}
                     onDropFiles={uploadFiles}
+                    sortKey={searchResults ? undefined : sortKey}
+                    sortDir={searchResults ? undefined : sortDir}
+                    onSortChange={searchResults ? undefined : changeSort}
+                    footer={
+                      searchResults ? null : (
+                        <Pager
+                          totalItems={totalItems}
+                          page={page}
+                          pageSize={pageSize}
+                          onPageChange={setPage}
+                          onPageSizeChange={changePageSize}
+                        />
+                      )
+                    }
                   />
                 </div>
 
@@ -711,6 +789,10 @@ function App() {
         />
       )}
 
+      {creatingFolder && (
+        <NewFolderDialog parentName={currentFolder.name} onCreate={handleCreateFolder} onCancel={() => setCreatingFolder(false)} />
+      )}
+
       {nodeToDelete && (
         <ConfirmDialog
           title={`Delete ${nodeToDelete.isFolder ? 'folder' : 'file'}?`}
@@ -746,9 +828,17 @@ function App() {
         />
       )}
 
+      {comparing && canCompare && (
+        <ComparePreview
+          left={selectedNodes[0]}
+          right={selectedNodes[1]}
+          onClose={() => setComparing(false)}
+        />
+      )}
+
       {browsing && !searchResults && bulkDialog === 'merge' && (
         <MergeDialog
-          count={selectedNodes.length}
+          files={mergeCandidates()}
           busy={bulkProgress !== null}
           onMerge={handleMerge}
           onCancel={() => setBulkDialog(null)}

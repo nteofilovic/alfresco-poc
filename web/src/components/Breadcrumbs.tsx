@@ -11,12 +11,14 @@ interface Props {
   searchResults: { query: string; count: number } | null
   onNavigate: (index: number) => void
   onClearSearch?: () => void
+  /** Hide the folder title (the space header above already names the root folder). */
+  hideTitle?: boolean
 }
 
 // Paths longer than this collapse their middle segments into an overflow menu.
 const MAX_VISIBLE = 4
 
-export function Breadcrumbs({ breadcrumb, searchResults, onNavigate, onClearSearch }: Props) {
+export function Breadcrumbs({ breadcrumb, searchResults, onNavigate, onClearSearch, hideTitle = false }: Props) {
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLSpanElement>(null)
 
@@ -129,9 +131,11 @@ export function Breadcrumbs({ breadcrumb, searchResults, onNavigate, onClearSear
           })}
         </ol>
       </nav>
-      <h2 className="crumbs-title" title={breadcrumb[lastIndex]?.name}>
-        {breadcrumb[lastIndex]?.name}
-      </h2>
+      {!hideTitle && (
+        <h2 className="crumbs-title" title={breadcrumb[lastIndex]?.name}>
+          {breadcrumb[lastIndex]?.name}
+        </h2>
+      )}
     </div>
   )
 }

@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
-import { Plus, Shapes } from 'lucide-react'
+import { Folder, Pencil, Plus, Shapes, Trash2 } from 'lucide-react'
 import { api, type FolderTemplate, type FolderTemplateNode } from '../api'
 import { apiErrorMessage } from '../formatters'
 import { ConfirmDialog } from './ConfirmDialog'
 import { DialogShell } from './DialogShell'
 import { EmptyState } from './EmptyState'
+import { FileTile } from './FileIcon'
 import { FolderTreeEditor } from './FolderTreeEditor'
 import { fromPayload, toPayload, type Draft } from './folderDraft'
 
@@ -168,20 +169,41 @@ export function FolderTemplatesAdmin({ onChanged }: { onChanged: () => void }) {
             {templates.map((t) => (
               <tr key={t.id}>
                 <td>
-                  {t.name}
-                  {t.description && <div className="admin-form-hint">{t.description}</div>}
+                  <span className="space-name-cell">
+                    <FileTile name={t.name} isFolder templateInstance />
+                    <span>
+                      {t.name}
+                      {t.description && <div className="admin-form-hint">{t.description}</div>}
+                    </span>
+                  </span>
                 </td>
-                <td>{t.folders.length === 0 ? 'None' : t.folders.map((f) => f.name).join(', ')}
-                  {countFolders(t.folders) > t.folders.length && (
-                    <span className="admin-form-hint"> ({countFolders(t.folders)} in total)</span>
-                  )}
+                <td>
+                  <span className="template-folders">
+                    <Folder size={15} aria-hidden="true" className="template-folders-icon" />
+                    <span className="template-folders-count" title="Subfolders in total">
+                      {countFolders(t.folders)}
+                    </span>
+                    {t.folders.length > 0 && <span className="admin-form-hint">{t.folders.map((f) => f.name).join(', ')}</span>}
+                  </span>
                 </td>
                 <td className="admin-user-actions">
-                  <button type="button" className="btn btn-secondary" onClick={() => setEditing(t)}>
-                    Edit
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-icon btn-sm"
+                    aria-label={`Edit template ${t.name}`}
+                    title="Edit template"
+                    onClick={() => setEditing(t)}
+                  >
+                    <Pencil size={16} aria-hidden="true" />
                   </button>
-                  <button type="button" className="btn btn-ghost" onClick={() => setToDelete(t)}>
-                    Delete
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-icon btn-sm"
+                    aria-label={`Delete template ${t.name}`}
+                    title="Delete template"
+                    onClick={() => setToDelete(t)}
+                  >
+                    <Trash2 size={16} aria-hidden="true" />
                   </button>
                 </td>
               </tr>

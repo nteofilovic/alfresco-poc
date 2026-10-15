@@ -149,6 +149,18 @@ export function isStructureFolder(node: NodeDto): boolean {
   return node.isFolder && node.properties?.['cm:description'] === 'zapis-structure'
 }
 
+/** Name of the folder template a folder was created from ("Client", "Property"...), or null for ordinary folders. */
+export function templateOf(node: NodeDto): string | null {
+  const d = node.isFolder ? node.properties?.['cm:description'] : null
+  return typeof d === 'string' && d.startsWith('zapis-template:') ? d.slice('zapis-template:'.length).trim() || null : null
+}
+
+/** Folders members own: made from a template, or a plain folder a manager or collaborator created. */
+export function isMemberFolder(node: NodeDto): boolean {
+  const d = node.isFolder ? node.properties?.['cm:description'] : null
+  return d === 'zapis-member' || templateOf(node) !== null
+}
+
 /** Returns an error message for an invalid file/folder name, or null if it's acceptable. */
 export function validateName(name: string): string | null {
   if (!name.trim()) return 'Enter a name.'

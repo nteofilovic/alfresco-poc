@@ -1,7 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
-import { Bell, FolderPlus, Plus, Search, Shapes, Upload, X } from 'lucide-react'
-import { ActionsMenu } from './ActionsMenu'
+import { Bell, Search, X } from 'lucide-react'
 
 const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
 
@@ -15,20 +14,9 @@ interface Props {
   notificationCount: number
   /** Popover content for the bell (the activity list); `close` dismisses the popover, e.g. after navigating. */
   notifications: (close: () => void) => ReactNode
-  /** Null when there is no folder to upload into (the menu item is then disabled with a hint). */
-  onUpload: (() => void) | null
-  /** Null when folders can't be created here (non-admins, or no folder open). */
-  onNewFolder: (() => void) | null
-  newFolderHint: string
-  uploadHint: string
-  /** Folder templates members can create from (Client, Property...); listed in the New menu. */
-  templates: { id: string; name: string }[]
-  /** Null when nothing can be created here (no space open, search results shown, or a read-only member). */
-  onNewFromTemplate: ((templateId: string) => void) | null
-  templateHint: string
 }
 
-/** Top bar: global search (Enter submits, Ctrl/⌘+K focuses), notifications and the "New" menu. */
+/** Top bar: global search (Enter submits, Ctrl/⌘+K focuses), and notifications. */
 export function Topbar({
   searchQuery,
   hasSearchResults,
@@ -37,13 +25,6 @@ export function Topbar({
   onClearSearch,
   notificationCount,
   notifications,
-  onUpload,
-  onNewFolder,
-  newFolderHint,
-  uploadHint,
-  templates,
-  onNewFromTemplate,
-  templateHint,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -92,40 +73,6 @@ export function Topbar({
 
       <div className="topbar-actions">
         <NotificationsButton count={notificationCount}>{notifications}</NotificationsButton>
-        <ActionsMenu
-          label="New"
-          disabled={false}
-          triggerClassName="btn btn-primary btn-lg"
-          actions={[
-            {
-              key: 'upload',
-              label: 'Upload files',
-              icon: <Upload size={15} aria-hidden="true" />,
-              disabled: !onUpload,
-              hint: uploadHint,
-              onSelect: () => onUpload?.(),
-            },
-            {
-              key: 'folder',
-              label: 'New folder',
-              icon: <FolderPlus size={15} aria-hidden="true" />,
-              disabled: !onNewFolder,
-              hint: newFolderHint,
-              onSelect: () => onNewFolder?.(),
-            },
-            ...templates.map((t) => ({
-              key: `template-${t.id}`,
-              label: `New ${t.name}`,
-              icon: <Shapes size={15} aria-hidden="true" />,
-              disabled: !onNewFromTemplate,
-              hint: templateHint,
-              onSelect: () => onNewFromTemplate?.(t.id),
-            })),
-          ]}
-        >
-          <Plus size={16} strokeWidth={2.2} aria-hidden="true" />
-          New
-        </ActionsMenu>
       </div>
     </header>
   )

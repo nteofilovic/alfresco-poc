@@ -170,7 +170,32 @@ const jsonInit = (method: string, body: unknown): RequestInit => ({
   body: JSON.stringify(body),
 })
 
+export type NodeSortKey = 'name' | 'modifiedAt' | 'owner' | 'sizeInBytes'
+export type NodeSortDir = 'asc' | 'desc'
+
+/** One page of a folder listing; folders come first, then the chosen sort, all computed server-side. */
+export interface NodePage {
+  items: NodeDto[]
+  totalItems: number
+  skip: number
+  maxItems: number
+  hasMore: boolean
+}
+
+export interface NodePageQuery {
+  skip: number
+  maxItems: number
+  sortBy: NodeSortKey
+  sortDir: NodeSortDir
+}
+
 export const api = {
+  listChildrenPage: (nodeId: string, { skip, maxItems, sortBy, sortDir }: NodePageQuery) =>
+    fetch(
+      `/api/nodes/${encodeURIComponent(nodeId)}/page?skip=${skip}&maxItems=${maxItems}&sortBy=${sortBy}&sortDir=${sortDir}`,
+      { credentials: 'include' },
+    ).then((r) => handle<NodePage>(r)),
+
   listChildren: (nodeId: string) =>
     fetch(`/api/nodes/${encodeURIComponent(nodeId)}/children`, { credentials: 'include' }).then((r) =>
       handle<NodeDto[]>(r),

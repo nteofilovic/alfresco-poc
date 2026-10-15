@@ -1,8 +1,8 @@
 import { Fragment, useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import { FolderOpen, Plus } from 'lucide-react'
+import { FolderOpen, Plus, UserPlus, X } from 'lucide-react'
 import { api, type ManagedUser, type Space, type SpaceMember, type SpaceRole } from '../api'
-import { apiErrorMessage } from '../formatters'
+import { apiErrorMessage, initials } from '../formatters'
 import { ConfirmDialog } from './ConfirmDialog'
 import { DialogShell } from './DialogShell'
 import { EmptyState } from './EmptyState'
@@ -53,6 +53,10 @@ function MembersPanel({ space }: { space: Space }) {
 
   return (
     <div className="space-members">
+      <div className="members-head">
+        <h4>Members</h4>
+        {members !== null && <span className="pill">{members.length}</span>}
+      </div>
       {error && (
         <div className="login-error" role="alert">
           {error}
@@ -60,60 +64,62 @@ function MembersPanel({ space }: { space: Space }) {
       )}
       {members === null ? (
         <p className="admin-form-hint">Loading…</p>
+      ) : members.length === 0 ? (
+        <p className="members-empty">No members yet. Add the people who should see this space.</p>
       ) : (
-        <table className="admin-user-table">
-          <thead>
-            <tr>
-              <th>Member</th>
-              <th>Role</th>
-              <th aria-label="Actions" />
-            </tr>
-          </thead>
-          <tbody>
-            {members.map((m) => (
-              <tr key={m.username}>
-                <td>
-                  {m.displayName} <span className="admin-form-hint">({m.username})</span>
-                </td>
-                <td>
-                  <select
-                    value={m.role}
-                    disabled={busy}
-                    aria-label={`Role of ${m.username}`}
-                    onChange={(e) => run(() => api.addSpaceMember(space.id, m.username, e.target.value as SpaceRole))}
-                  >
-                    {ROLES.map((r) => (
-                      <option key={r.value} value={r.value}>
-                        {r.label}
-                      </option>
-                    ))}
-                  </select>
-                </td>
-                <td className="admin-user-actions">
-                  <button
-                    type="button"
-                    className="btn btn-ghost"
-                    disabled={busy}
-                    onClick={() => run(() => api.removeSpaceMember(space.id, m.username))}
-                  >
-                    Remove
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <ul className="members-list">
+          {members.map((m) => (
+            <li key={m.username} className="member-row">
+              <span className="avatar avatar-muted" aria-hidden="true">
+                {initials(m.displayName || m.username)}
+              </span>
+              <span className="member-who">
+                <span className="member-name">{m.displayName}</span>
+                <span className="member-username">{m.username}</span>
+              </span>
+              <select
+                className="member-role"
+                value={m.role}
+                disabled={busy}
+                aria-label={`Role of ${m.displayName}`}
+                onChange={(e) => run(() => api.addSpaceMember(space.id, m.username, e.target.value as SpaceRole))}
+              >
+                {ROLES.map((r) => (
+                  <option key={r.value} value={r.value}>
+                    {r.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="btn btn-ghost btn-icon btn-sm"
+                disabled={busy}
+                aria-label={`Remove ${m.displayName}`}
+                title="Remove from space"
+                onClick={() => run(() => api.removeSpaceMember(space.id, m.username))}
+              >
+                <X size={16} aria-hidden="true" />
+              </button>
+            </li>
+          ))}
+        </ul>
       )}
       <form
-        className="admin-form-row"
+        className="member-add"
         onSubmit={(e: FormEvent) => {
           e.preventDefault()
           run(() => api.addSpaceMember(space.id, username, role)).then(() => setUsername(''))
         }}
       >
-        <select value={username} onChange={(e) => setUsername(e.target.value)} aria-label="Person to add" required>
+        <select
+          className="member-pick"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          aria-label="Person to add"
+          required
+        >
           <option value="" disabled>
-            Add a person…
+            {candidates.length ? 'Choose a person…' : 'Everyone is already a member'}
           </option>
           {candidates.map((u) => (
             <option key={u.username} value={u.username}>
@@ -121,15 +127,16 @@ function MembersPanel({ space }: { space: Space }) {
             </option>
           ))}
         </select>
-        <select value={role} onChange={(e) => setRole(e.target.value as SpaceRole)} aria-label="Role">
+        <select className="member-role" value={role} onChange={(e) => setRole(e.target.value as SpaceRole)} aria-label="Role">
           {ROLES.map((r) => (
             <option key={r.value} value={r.value}>
               {r.label}
             </option>
           ))}
         </select>
-        <button type="submit" className="btn btn-secondary" disabled={busy || !username}>
-          Add
+        <button type="submit" className="btn btn-primary" disabled={busy || !username}>
+          <UserPlus size={15} aria-hidden="true" />
+          Add member
         </button>
       </form>
     </div>

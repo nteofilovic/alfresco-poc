@@ -1,5 +1,7 @@
 import { ChevronsUpDown, FolderClosed, House, LogOut, Settings, SquareCheckBig, UserRound } from 'lucide-react'
 import type { ReactNode } from 'react'
+import type { Space } from '../api'
+import { spaceColor } from '../spaceColor'
 import { initials } from '../formatters'
 import { ActionsMenu } from './ActionsMenu'
 
@@ -12,6 +14,11 @@ interface Props {
   /** Shown under the product name (the company name); empty hides it. */
   companyName: string
   view: View
+  /** The spaces the user belongs to, listed under Spaces for one-click access. */
+  spaces: Space[]
+  /** The space that is open, if any; its entry is highlighted in its own color. */
+  currentSpaceId: string | null
+  onOpenSpace: (space: Space) => void
   /** Unseen task notices, shown as a badge on the Tasks link. */
   taskBadge?: number
   onNavigate: (view: View) => void
@@ -27,7 +34,7 @@ function NavLink({
   onNavigate,
 }: {
   view: View
-  current: View
+  current: View | null
   icon: ReactNode
   label: string
   badge?: number
@@ -54,7 +61,7 @@ function NavLink({
   )
 }
 
-export function Sidebar({ displayName, isAdmin, companyName, view, taskBadge = 0, onNavigate, onLogout }: Props) {
+export function Sidebar({ displayName, isAdmin, companyName, view, spaces, currentSpaceId, onOpenSpace, taskBadge = 0, onNavigate, onLogout }: Props) {
   const icon = (C: typeof House) => <C size={18} strokeWidth={1.8} aria-hidden="true" />
   return (
     <aside className="rail">
@@ -70,7 +77,36 @@ export function Sidebar({ displayName, isAdmin, companyName, view, taskBadge = 0
 
       <nav className="rail-nav" aria-label="Main">
         <NavLink view="home" current={view} icon={icon(House)} label="Home" onNavigate={onNavigate} />
-        <NavLink view="spaces" current={view} icon={icon(FolderClosed)} label="Spaces" onNavigate={onNavigate} />
+        {/* With a space open, its own entry below carries the highlight instead. */}
+        <NavLink
+          view="spaces"
+          current={view === 'spaces' && currentSpaceId ? null : view}
+          icon={icon(FolderClosed)}
+          label="Spaces"
+          onNavigate={onNavigate}
+        />
+        {spaces.length > 0 && (
+          <ul className="rail-spaces" aria-label="Your spaces">
+            {spaces.map((s) => {
+              const active = view === 'spaces' && s.id === currentSpaceId
+              return (
+                <li key={s.id}>
+                  <button
+                    type="button"
+                    className={`rail-space${active ? ' active' : ''}`}
+                    style={spaceColor(s.id)}
+                    aria-current={active ? 'page' : undefined}
+                    title={s.title}
+                    onClick={() => onOpenSpace(s)}
+                  >
+                    <span className="rail-space-dot" aria-hidden="true" />
+                    <span className="rail-label">{s.title}</span>
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        )}
         <NavLink view="tasks" current={view} icon={icon(SquareCheckBig)} label="Tasks" badge={taskBadge} onNavigate={onNavigate} />
         {isAdmin && <NavLink view="admin" current={view} icon={icon(Settings)} label="Administration" onNavigate={onNavigate} />}
       </nav>

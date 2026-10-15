@@ -1,20 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { DragEvent } from 'react'
+import type { DragEvent, ReactNode } from 'react'
 import { ArrowDown, ArrowUp, ArrowUpDown, Copy, Download, Eye, FolderInput, FolderOpen, Pencil, SearchX, Trash2, Upload, UploadCloud } from 'lucide-react'
-import type { NodeDto } from '../api'
+import type { NodeDto, NodeSortDir, NodeSortKey } from '../api'
 import { downloadNodes } from '../download'
-import { formatBytes, formatDate, initials, isStructureFolder, typeLabel } from '../formatters'
+import { formatBytes, formatDate, initials, isMemberFolder, isStructureFolder, templateOf, typeLabel } from '../formatters'
 import { FileTile } from './FileIcon'
 import { EmptyState } from './EmptyState'
 import { ActionsMenu, type MenuAction } from './ActionsMenu'
 
-type SortKey = 'name' | 'modifiedAt' | 'owner' | 'sizeInBytes'
-type SortDir = 'asc' | 'desc'
+type SortKey = NodeSortKey
+type SortDir = NodeSortDir
 
 interface Props {
   nodes: NodeDto[]
   loading: boolean
   selected: Set<string>
+  /** Row briefly marked as new (e.g. the merged PDF); scrolled into view when set. */
+  highlightedId?: string | null
   isSearchView: boolean
   searchQuery: string
   onToggleSelected: (id: string) => void
@@ -43,6 +45,15 @@ interface Props {
   onCopy: (node: NodeDto) => void
   onMove: (node: NodeDto) => void
   onDropFiles: (files: File[]) => void
+  /**
+   * Server-side sort (folder listing): the rows are rendered in the order given and a header click calls
+   * `onSortChange`. Omit `onSortChange` (search results) and the table sorts the rows itself.
+   */
+  sortKey?: SortKey
+  sortDir?: SortDir
+  onSortChange?: (key: SortKey, dir: SortDir) => void
+  /** Rendered directly under the rows (the pager). */
+  footer?: ReactNode
 }
 
 const COLUMNS: { key: SortKey; label: string }[] = [
@@ -56,6 +67,7 @@ export function FileTable({
   nodes,
   loading,
   selected,
+  highlightedId,
   isSearchView,
   searchQuery,
   onToggleSelected,
@@ -77,24 +89,33 @@ export function FileTable({
   onCopy,
   onMove,
   onDropFiles,
+  sortKey: sortKeyProp,
+  sortDir: sortDirProp,
+  onSortChange,
+  footer,
 }: Props) {
-  const [sortKey, setSortKey] = useState<SortKey>('name')
-  const [sortDir, setSortDir] = useState<SortDir>('asc')
+  const serverSort = onSortChange !== undefined
+  const [localKey, setLocalKey] = useState<SortKey>('name')
+  const [localDir, setLocalDir] = useState<SortDir>('asc')
+  const sortKey = serverSort ? (sortKeyProp ?? 'name') : localKey
+  const sortDir = serverSort ? (sortDirProp ?? 'asc') : localDir
   const [dragActive, setDragActive] = useState(false)
   const dragDepth = useRef(0)
 
   function toggleSort(key: SortKey) {
-    if (key === sortKey) {
-      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+    const dir: SortDir = key === sortKey ? (sortDir === 'asc' ? 'desc' : 'asc') : 'asc'
+    if (onSortChange) {
+      onSortChange(key, dir)
     } else {
-      setSortKey(key)
-      setSortDir('asc')
+      setLocalKey(key)
+      setLocalDir(dir)
     }
   }
 
   const ownerOf = (n: NodeDto) => (n.createdByUser ? ownerNameOf(n.createdByUser) : '')
 
   const sorted = useMemo(() => {
+    if (serverSort) return nodes // already ordered by the server
     const copy = [...nodes]
     copy.sort((a, b) => {
       // Folders always sort before files, regardless of column.
@@ -113,7 +134,7 @@ export function FileTable({
       return sortDir === 'asc' ? cmp : -cmp
     })
     return copy
-  }, [nodes, sortKey, sortDir, ownerNameOf])
+  }, [nodes, serverSort, sortKey, sortDir, ownerNameOf])
 
   function rowActions(node: NodeDto): MenuAction[] {
     const actions: MenuAction[] = []
@@ -123,7 +144,7 @@ export function FileTable({
         { key: 'download', label: 'Download', icon: <Download size={15} aria-hidden="true" />, onSelect: () => downloadNodes([node.id]) },
       )
     }
-    if (node.isFile || canManageFolders) {
+    if (node.isFile || canManageFolders || isMemberFolder(node)) {
       const structure = isStructureFolder(node)
       actions.push({
         key: 'rename',
@@ -153,7 +174,7 @@ export function FileTable({
         },
       )
     }
-    if (node.isFile || canDeleteFolders) {
+    if (node.isFile || canDeleteFolders || isMemberFolder(node)) {
       actions.push({
         key: 'delete',
         label: 'Delete',
@@ -177,6 +198,10 @@ export function FileTable({
   useEffect(() => {
     if (activeId) document.querySelector('.node-table tr.previewing')?.scrollIntoView({ block: 'nearest' })
   }, [activeId])
+
+  useEffect(() => {
+    if (highlightedId) document.querySelector('.node-table tr.just-added')?.scrollIntoView({ block: 'nearest' })
+  }, [highlightedId, loading])
 
   useEffect(() => {
     onFilesOrdered(sorted.filter((n) => n.isFile))
@@ -297,10 +322,11 @@ export function FileTable({
               sorted.map((node) => {
                 const owner = ownerOf(node)
                 const actions = rowActions(node)
+                const template = templateOf(node)
                 return (
                   <tr
                     key={node.id}
-                    className={`${selected.has(node.id) ? 'selected' : ''}${node.id === activeId ? ' previewing' : ''}`}
+                    className={`${selected.has(node.id) ? 'selected' : ''}${node.id === activeId ? ' previewing' : ''}${node.id === highlightedId ? ' just-added' : ''}`}
                   >
                     <td className="col-check">
                       {(node.isFile || canSelectFolders) && (
@@ -314,7 +340,7 @@ export function FileTable({
                     </td>
                     <td className="col-name">
                       <div className="name-cell">
-                        <FileTile name={node.name} isFolder={node.isFolder} />
+                        <FileTile name={node.name} isFolder={node.isFolder} templateInstance={!!template} />
                         <div className="name-stack">
                           <button
                             type="button"
@@ -334,7 +360,9 @@ export function FileTable({
                               {getLocation(node)}
                             </button>
                           ) : (
-                            <span className="name-sub">{typeLabel(node.name, node.isFolder)}</span>
+                            <span className={`name-sub${template ? ' name-sub-template' : ''}`}>
+                              {template ?? typeLabel(node.name, node.isFolder)}
+                            </span>
                           )}
                         </div>
                       </div>
@@ -384,6 +412,8 @@ export function FileTable({
           </tbody>
         </table>
       </div>
+
+      {footer}
 
       {!isSearchView && (
         <button type="button" className="drop-zone" onClick={onUploadClick}>

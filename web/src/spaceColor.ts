@@ -1,26 +1,31 @@
 import type { CSSProperties } from 'react'
 
 interface Tone {
-  /** Pastel fill: tiles, chips, hovers. */
+  /** Pastel fill: cover bands, tiles, the wash behind a space. */
   fill: string
-  /** Mid tone of the same hue: bars, borders, rings. */
+  /** Mid tone of the same hue: rings, borders, the dot in the sidebar. */
   line: string
   /** Dark tone of the same hue for text on the fill (contrast at least 4.5:1). */
   ink: string
 }
 
-/** Pastel tones for spaces, one hue each, kept soft enough to sit next to the app's indigo accent. */
+/**
+ * Pastel tones for spaces: twelve tones spread around the color wheel, so two spaces rarely look alike.
+ * Ordered by hue; the app's own accent (indigo) is one of them.
+ */
 const PALETTE: Tone[] = [
-  { fill: '#e0e4fb', line: '#a3adf0', ink: '#2f3a9e' }, // indigo
-  { fill: '#d2f0eb', line: '#7fcfc4', ink: '#0f5f58' }, // teal
-  { fill: '#fde9c4', line: '#f0c26b', ink: '#8a4a08' }, // amber
-  { fill: '#fbdde3', line: '#f0a3b3', ink: '#9d1237' }, // rose
-  { fill: '#e7ddfa', line: '#b9a3ee', ink: '#5b2aa8' }, // violet
-  { fill: '#d9f0dc', line: '#8fd09a', ink: '#1a6a35' }, // green
-  { fill: '#d5e8f7', line: '#8cc0e8', ink: '#1d5f8f' }, // blue
-  { fill: '#f6dcf4', line: '#e0a2da', ink: '#86207a' }, // fuchsia
-  { fill: '#fddfd0', line: '#f2ac86', ink: '#a2410d' }, // orange
-  { fill: '#e3e8ee', line: '#aab6c4', ink: '#3d4a5c' }, // slate
+  { fill: '#f1e7d6', line: '#d7bf94', ink: '#6b4f1d' }, // sand (not red: red reads as an error)
+  { fill: '#fde3cf', line: '#f5b27f', ink: '#9a4309' }, // orange
+  { fill: '#fbefba', line: '#e8cc59', ink: '#7a5b00' }, // yellow
+  { fill: '#e8f3c8', line: '#bcd96a', ink: '#4b6a0c' }, // lime
+  { fill: '#d6f1de', line: '#85cf9b', ink: '#17673a' }, // green
+  { fill: '#cdf0ec', line: '#74cdc2', ink: '#0d5e57' }, // teal
+  { fill: '#d2eef8', line: '#80cbe6', ink: '#0b5f7e' }, // cyan
+  { fill: '#dbe6fb', line: '#93b3ee', ink: '#1f4aa3' }, // blue
+  { fill: '#e1e3fa', line: '#a2a9ee', ink: '#2f379c' }, // indigo
+  { fill: '#e9defa', line: '#bca5ee', ink: '#5b2aa8' }, // violet
+  { fill: '#f6dcf3', line: '#e1a1d8', ink: '#85206f' }, // magenta
+  { fill: '#fcdfea', line: '#f2a3c0', ink: '#a0245c' }, // pink
 ]
 
 /** FNV-1a: small, stable and well spread for short ids. */
@@ -33,7 +38,10 @@ function hash(text: string): number {
   return h >>> 0
 }
 
-/** The tones of a space; derived from its id, so they never change and need no setting. */
+/**
+ * The tones of a space. Derived from its id alone, so a space looks the same to everyone and never
+ * changes; the price is that two spaces can occasionally share a color.
+ */
 export function spaceTone(spaceId: string): Tone {
   return PALETTE[hash(spaceId) % PALETTE.length]
 }

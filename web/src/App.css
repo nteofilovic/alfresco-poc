@@ -1,13 +1,13 @@
 :root {
   /* Ground, surfaces and lines */
-  --fog: #f4f5f2; /* page ground */
+  --fog: #f4f6f9; /* page ground */
   --sheet: #ffffff; /* cards, sidebar, table */
-  --tab-back: #e9ebe6; /* neutral fill: segmented controls, owner avatars, hover on grey */
-  --rule: #e3e5e0; /* card and section borders */
-  --rule-soft: #edeeea; /* row separators */
-  --rule-input: #dcdfd8; /* inputs and secondary buttons */
-  --rule-dashed: #cdd1c9;
-  --hover: #f8f9f6;
+  --tab-back: #e8ecf1; /* neutral fill: segmented controls, owner avatars, hover on grey */
+  --rule: #e1e5eb; /* card and section borders */
+  --rule-soft: #ebeef2; /* row separators */
+  --rule-input: #d7dce4; /* inputs and secondary buttons */
+  --rule-dashed: #c8cfd9;
+  --hover: #f8f9fc;
 
   /* Text */
   --ink: #16181d;
@@ -1104,6 +1104,11 @@ button.link-accent:hover {
   max-width: 460px;
 }
 
+/* In the dialog the builder is height-capped and scrolls; its children must not shrink to fit. */
+.ws-builder > * {
+  flex-shrink: 0;
+}
+
 .ws-tree,
 .ws-children > .ws-tree {
   list-style: none;
@@ -1168,12 +1173,14 @@ button.link-accent:hover {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+  width: 100%;
   margin: 4px 0;
 }
 
+/* The input takes all the room the buttons leave; on narrow screens the buttons wrap below it. */
 .ws-name-form input {
-  flex: 1;
-  min-width: 160px;
+  flex: 1 1 240px;
+  min-width: 0;
   height: 40px;
   padding: 0 10px;
   border: 1px solid var(--rule-input);
@@ -1182,10 +1189,12 @@ button.link-accent:hover {
   background: #fff;
 }
 
-.ws-name-form input:focus-visible {
+/* Inside a .dialog-field the generic `.dialog-field input:focus-visible` (blue outline) comes later with equal specificity, so this one is scoped tighter to win. */
+.ws-name-form input:focus-visible,
+.dialog-field .ws-name-form input:focus-visible {
   outline: none;
-  border-color: var(--stamp);
-  box-shadow: 0 0 0 3px var(--stamp-soft);
+  border-color: var(--ink-soft);
+  box-shadow: none;
 }
 
 .ws-name-form input[aria-invalid='true'] {
@@ -1602,6 +1611,79 @@ button.link-accent:hover {
   background: var(--selected);
 }
 
+/* ---------- Pager (under the file rows) ---------- */
+
+.file-table-wrap .pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 20px;
+  padding: 8px 16px;
+  border-top: 1px solid var(--rule-soft);
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.file-table-wrap .pager p {
+  margin: 0;
+}
+
+.file-table-wrap .pager-range {
+  color: var(--ink-soft);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  margin-right: auto;
+}
+
+.file-table-wrap .pager-size {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.file-table-wrap .pager-size select {
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--rule-input);
+  border-radius: var(--radius-nav);
+  background: #fff;
+  color: var(--ink);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.file-table-wrap .pager-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.file-table-wrap .pager-page {
+  min-width: 96px;
+  padding: 0 6px;
+  text-align: center;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 640px) {
+  .file-table-wrap .pager {
+    justify-content: space-between;
+    padding: 8px 10px;
+  }
+  .file-table-wrap .pager-size-long,
+  .file-table-wrap .pager-page {
+    display: none;
+  }
+  .file-table-wrap .pager-range {
+    margin-right: 0;
+  }
+  .file-table-wrap .pager-nav .icon-button {
+    width: var(--control);
+    height: var(--control);
+  }
+}
+
 .node-table {
   width: 100%;
   min-width: 640px;
@@ -1655,6 +1737,49 @@ button.link-accent:hover {
 .node-table tr.selected,
 .node-table tr.selected:hover {
   background: #f8f9fd;
+}
+
+/* Freshly created row (merged PDF): stamp tint + left accent, held ~1.4s, faded over the last 0.6s.
+   Animations beat the hover/selected/previewing backgrounds while running, then the row reverts to them. */
+.node-table tbody tr.just-added {
+  animation: row-just-added 2s ease-out;
+}
+
+.node-table tbody tr.just-added td:first-child {
+  animation: row-just-added-accent 2s ease-out;
+}
+
+@keyframes row-just-added {
+  0%,
+  70% {
+    background-color: var(--stamp-soft);
+  }
+}
+
+@keyframes row-just-added-accent {
+  0%,
+  70% {
+    box-shadow: inset 3px 0 0 var(--stamp);
+  }
+  100% {
+    box-shadow: inset 3px 0 0 transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* No fade: a static tint that the timer removes after ~2s. */
+  .node-table tbody tr.just-added,
+  .node-table tbody tr.just-added td:first-child {
+    animation: none;
+  }
+
+  .node-table tbody tr.just-added {
+    background-color: var(--stamp-soft);
+  }
+
+  .node-table tbody tr.just-added td:first-child {
+    box-shadow: inset 3px 0 0 var(--stamp);
+  }
 }
 
 .node-table input[type='checkbox'] {
@@ -2297,6 +2422,100 @@ button.link-accent:hover {
 .icon-button:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+/* Compare side by side: full-viewport overlay, two independently scrolling panes. */
+.compare-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  background: var(--sheet);
+  animation: preview-in 0.18s ease-out;
+}
+
+.compare-overlay:focus {
+  outline: none;
+}
+
+.compare-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px 10px 16px;
+  border-bottom: 1px solid var(--rule);
+  flex-shrink: 0;
+}
+
+.compare-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 17px;
+}
+
+.compare-swap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  margin-right: 6px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.compare-swap:hover {
+  background: var(--tab-back);
+  color: var(--ink);
+}
+
+.compare-swap:focus-visible {
+  outline: 2px solid var(--stamp);
+  outline-offset: 1px;
+}
+
+.compare-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1px;
+  background: var(--rule); /* the 1px gap shows through as the divider */
+}
+
+.compare-pane {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--sheet);
+}
+
+.compare-pane .preview-body {
+  min-width: 0;
+}
+
+/* Images fit the pane width and scroll vertically inside it. */
+.preview-image.compare-image {
+  width: 100%;
+  height: auto;
+  margin: 0 auto auto;
+}
+
+@media (max-width: 900px) {
+  .compare-grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  }
 }
 
 @media (max-width: 900px) {
@@ -3640,7 +3859,10 @@ textarea {
   margin: 0;
 }
 
-/* ---- Space colors: pastel tones set per space via --space (fill), --space-line (mid) and --space-ink (text), see spaceColor.ts ---- */
+/* ---- Space colors ----
+   Every space carries three tones (spaceColor.ts): --space (pastel fill), --space-line (mid), --space-ink (text).
+   Color shows up in few, deliberate places: the cover of a card, the header of an open space and the wash behind
+   it, the sidebar entry, and small monograms and chips elsewhere. */
 .space-mark {
   flex: none;
   display: inline-grid;
@@ -3674,27 +3896,65 @@ textarea {
   font-size: 22px;
 }
 
+.space-mark-xl {
+  width: 52px;
+  height: 52px;
+  border-radius: 15px;
+  font-size: 25px;
+}
+
+/* White tile with a colored ring, for sitting on a colored band. */
+.space-mark-on-color {
+  background: #fff;
+  box-shadow: inset 0 0 0 2px var(--space-line);
+}
+
+/* ---- Spaces page: one colored element per card, its cover ---- */
 .space-card {
-  position: relative;
+  padding: 0;
+  gap: 0;
+  align-items: stretch;
   overflow: hidden;
-  padding-top: 22px;
-  background: color-mix(in srgb, var(--space) 18%, var(--sheet));
+  background: var(--sheet);
   transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
 }
 
-/* The accent bar on top of the card. */
-.space-card::before {
-  content: '';
-  position: absolute;
-  inset: 0 0 auto 0;
-  height: 5px;
-  background: var(--space-line);
+.space-card-cover {
+  display: block;
+  height: 60px;
+  background: var(--space);
+  border-bottom: 1px solid color-mix(in srgb, var(--space-line) 55%, transparent);
+}
+
+.space-card-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 0 18px 16px;
+}
+
+/* The tile straddles the cover's lower edge; a white halo separates it from the band. */
+.space-card-body .space-mark {
+  margin-top: -26px;
+  box-shadow: 0 0 0 4px var(--sheet), inset 0 0 0 2px var(--space-line);
+}
+
+.space-card-title {
+  margin-top: 6px;
+}
+
+.space-card-meta {
+  margin-top: auto;
+  padding-top: 6px;
+  color: var(--muted);
 }
 
 .space-card:hover {
   border-color: var(--space-line);
-  background: color-mix(in srgb, var(--space) 40%, var(--sheet));
-  box-shadow: 0 6px 18px color-mix(in srgb, var(--space-line) 45%, transparent);
+  background: var(--sheet);
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--space-line) 38%, transparent);
   transform: translateY(-1px);
 }
 
@@ -3703,14 +3963,172 @@ textarea {
   outline-offset: 2px;
 }
 
-.space-card-meta {
-  display: inline-block;
-  padding: 2px 9px;
+/* ---- Inside a space: the page wears the space's color ---- */
+.content.in-space {
+  background: color-mix(in srgb, var(--space) 34%, var(--fog));
+}
+
+.space-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 22px 20px;
+  color: var(--space-ink);
+  background: var(--space);
+  border: 1px solid var(--space-line);
+  border-radius: var(--radius-card);
+}
+
+.space-hero-back {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: -8px;
+  padding: 4px 10px 4px 8px;
+  border: 0;
+  border-radius: var(--radius-nav);
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.space-hero-back:hover {
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.space-hero-back:focus-visible {
+  outline: 2px solid var(--space-ink);
+  outline-offset: 1px;
+}
+
+.space-hero-main {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+}
+
+.space-hero-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.space-hero-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.space-hero-desc {
+  margin: 4px 0 0;
+  font-size: 14px;
+  color: color-mix(in srgb, var(--space-ink) 85%, var(--space));
+}
+
+.space-hero-role {
+  flex: none;
+  padding: 4px 12px;
   font-size: 12px;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.65);
+  border-radius: 999px;
+}
+
+/* ---- Sidebar: the user's spaces under "Spaces" ---- */
+.rail-nav {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.rail-spaces {
+  list-style: none;
+  margin: 2px 0 6px 18px;
+  padding: 0 0 0 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 38vh; /* many spaces scroll here, so Tasks and Administration stay in view */
+  overflow-y: auto;
+  border-left: 1px solid var(--rule);
+}
+
+.rail-space {
+  cursor: pointer;
+  width: 100%;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--radius-nav);
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 13.5px;
+  text-align: left;
+}
+
+.rail-space .rail-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rail-space-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--space-line);
+  box-shadow: 0 0 0 2px var(--space);
+}
+
+.rail-space:hover {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--space) 55%, #fff);
+}
+
+.rail-space.active {
   font-weight: 600;
   color: var(--space-ink);
   background: var(--space);
-  border-radius: 999px;
+}
+
+.rail-space:focus-visible {
+  outline: 2px solid var(--space-ink);
+  outline-offset: -2px;
+}
+
+/* ---- Small uses: tables, task chips, filters ---- */
+.space-name-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.task-space-chip {
+  margin-left: 8px;
+  color: var(--space-ink, var(--stamp));
+  background: var(--space, var(--stamp-soft));
+}
+
+.task-space-filter select {
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--rule-input);
+  border-radius: var(--radius);
+  background: var(--sheet);
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -3723,33 +4141,386 @@ textarea {
   }
 }
 
-.space-banner {
+/* ---- Space members (Administration > Spaces) ---- */
+.admin-user-table td:has(> .space-members) {
+  background: var(--selected);
+  padding: 16px;
+}
+
+.space-members {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0;
+  margin: 0;
+}
+
+.members-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.members-head h4 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.members-empty {
+  margin: 0;
+  padding: 16px;
+  text-align: center;
+  color: var(--muted);
+  background: var(--sheet);
+  border: 1px dashed var(--rule-dashed);
+  border-radius: var(--radius);
+}
+
+.members-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  background: var(--sheet);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-card);
+}
+
+.member-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+}
+
+.member-row + .member-row {
+  border-top: 1px solid var(--rule-soft);
+}
+
+.member-who {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.member-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.member-username {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.space-members select {
+  height: 40px;
+  padding: 0 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--rule-input);
+  background: var(--sheet);
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.space-members select:focus-visible {
+  outline: 2px solid var(--stamp);
+  outline-offset: 1px;
+}
+
+.member-role {
+  flex: none;
+  width: 150px;
+}
+
+.member-add {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.member-pick {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+@media (max-width: 640px) {
+  .member-row {
+    flex-wrap: wrap;
+  }
+  .member-role {
+    width: auto;
+    flex: 1;
+  }
+}
+
+/* Folders made from a folder template (Client, Property...): the space's own tone, template name underneath. */
+.file-tile-template {
+  background: var(--space, var(--stamp-soft));
+  color: var(--space-ink, var(--stamp));
+  box-shadow: inset 0 0 0 1px var(--space-line, transparent);
+}
+
+/* Folder templates list: subfolder count (with the first-level names) beside a small folder icon. */
+.template-folders {
+  display: inline-flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+
+.template-folders-icon {
+  align-self: center;
+  color: var(--folder-ink);
+}
+
+.template-folders-count {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.name-sub-template {
+  font-weight: 600;
+  color: var(--space-ink, var(--stamp));
+}
+
+/* Submenu (New > Template…): opens beside its item, on hover, click or ArrowRight. */
+.menu-sub-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.menu-sub-wrap > .menu-item[aria-expanded='true'] {
+  background: var(--fog);
+}
+
+.menu-item-chevron {
+  margin-left: auto;
+  color: var(--muted);
+}
+
+.menu.menu-sub {
+  position: absolute;
+  top: -5px;
+  left: calc(100% - 2px);
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.menu.menu-sub.menu-sub-left {
+  left: auto;
+  right: calc(100% - 2px);
+}
+
+/* The folder template dialog holds a tree of folder names that can run long: give it more room than other wide dialogs. */
+.confirm-dialog.dialog-wide:has(.ws-builder) {
+  width: min(760px, calc(100vw - 32px));
+}
+
+.confirm-dialog.dialog-wide .ws-builder {
+  max-width: none;
+  width: 100%;
+}
+
+/* Progress bar (indeterminate by default; reusable) */
+.progress-bar {
+  position: relative;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--stamp-soft-hover);
+  overflow: hidden;
+}
+
+.progress-bar .progress-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  border-radius: inherit;
+  background: var(--stamp);
+  transition: width 0.25s ease;
+}
+
+.progress-bar.progress-indeterminate .progress-fill {
+  width: 40%;
+  transition: none;
+  animation: progress-slide 1.3s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+@keyframes progress-slide {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(250%); }
+}
+
+@keyframes progress-pulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progress-bar.progress-indeterminate .progress-fill {
+    width: 100%;
+    animation: progress-pulse 2s ease-in-out infinite;
+  }
+}
+
+/* Dialog slot: fixed height so the dialog does not jump. Scoped under .dialog-content to beat `.dialog-content p`-style rules. */
+.dialog-content .dialog-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  justify-content: flex-start;
+  min-height: 52px;
+  margin-top: 16px;
+}
+
+.dialog-content .dialog-progress .progress-status {
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+/* Merge order list. Scoped under .dialog-content so it beats `.dialog-content p` / `.dialog-field` rules. */
+.dialog-content .merge-list {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 4px;
+  max-height: min(300px, 40vh);
+  overflow-y: auto;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: #fff;
+}
+
+.dialog-content .merge-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 8px;
-  padding-left: 10px;
-  border-left: 4px solid var(--space-line);
+  padding: 6px 6px 6px 2px;
+  border-radius: var(--radius-nav);
+  cursor: grab;
+  font-size: 14px;
+  color: var(--ink);
 }
 
-.space-banner-name {
+.dialog-content .merge-row + .merge-row {
+  border-top: 1px solid var(--rule-soft);
+}
+
+.dialog-content .merge-row:hover {
+  background: var(--stamp-soft);
+}
+
+.dialog-content .merge-row:focus-visible {
+  outline: 2px solid var(--stamp);
+  outline-offset: -2px;
+}
+
+.dialog-content .merge-row-dragging {
+  opacity: 0.45;
+}
+
+/* Drop indicator: a stamp-coloured line on the edge where the dragged file will land. */
+.dialog-content .merge-row-drop-before::after,
+.dialog-content .merge-row-drop-after::after {
+  content: '';
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--stamp);
+  pointer-events: none;
+}
+
+.dialog-content .merge-row-drop-before::after {
+  top: -2px;
+}
+
+.dialog-content .merge-row-drop-after::after {
+  bottom: -2px;
+}
+
+.dialog-content .merge-list-busy .merge-row {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.dialog-content .merge-grip {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  color: var(--muted-soft);
+}
+
+.dialog-content .merge-pos {
+  flex: none;
+  min-width: 18px;
+  text-align: right;
   font-size: 13px;
-  font-weight: 700;
-  color: var(--space-ink);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
 }
 
-.space-banner .space-back {
-  margin: 0 0 0 auto;
+.dialog-content .merge-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
 }
 
-.space-name-cell {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
+.dialog-content .merge-size {
+  flex: none;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 
-.task-space-chip {
-  margin-left: 8px;
-  color: var(--space-ink, var(--stamp));
-  background: var(--space, var(--stamp-soft));
+.dialog-content .merge-moves {
+  flex: none;
+  display: flex;
+  gap: 2px;
+}
+
+.dialog-content .merge-move {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-nav);
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.dialog-content .merge-move:hover:not(:disabled) {
+  background: var(--stamp-soft-hover);
+  color: var(--stamp);
+}
+
+.dialog-content .merge-move:focus-visible {
+  outline: 2px solid var(--stamp);
+  outline-offset: 1px;
+}
+
+.dialog-content .merge-move:disabled {
+  color: var(--rule-dashed);
+  cursor: default;
+}
+
+@media (max-width: 480px) {
+  .dialog-content .merge-size {
+    display: none;
+  }
 }

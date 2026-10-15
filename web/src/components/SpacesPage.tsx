@@ -1,6 +1,7 @@
 import { FolderOpen } from 'lucide-react'
 import type { Space } from '../api'
 import { spaceColor } from '../spaceColor'
+import { roleLabel } from '../spaceRoles'
 import { EmptyState } from './EmptyState'
 import { SpaceMark } from './SpaceMark'
 import { Spinner } from './Spinner'
@@ -10,13 +11,6 @@ interface Props {
   spaces: Space[] | null
   isAdmin: boolean
   onOpen: (space: Space) => void
-}
-
-const ROLE_LABEL: Record<string, string> = {
-  SiteManager: 'Manager',
-  SiteCollaborator: 'Collaborator',
-  SiteContributor: 'Contributor',
-  SiteConsumer: 'Viewer',
 }
 
 /** The spaces (business areas) the signed-in user can open. */
@@ -49,12 +43,12 @@ export function SpacesPage({ spaces, isAdmin, onOpen }: Props) {
           {spaces.map((s) => (
             <li key={s.id}>
               <button type="button" className="space-card" style={spaceColor(s.id)} onClick={() => onOpen(s)}>
-                <SpaceMark id={s.id} title={s.title} size="lg" />
-                <span className="space-card-title">{s.title}</span>
-                {s.description && <span className="space-card-desc">{s.description}</span>}
-                <span className="space-card-meta">
-                  {s.role ? (ROLE_LABEL[s.role] ?? s.role) : 'Administrator'}
-                  {s.visibility && s.visibility !== 'PRIVATE' ? ` · ${s.visibility.toLowerCase()}` : ''}
+                <span className="space-card-cover" aria-hidden="true" />
+                <span className="space-card-body">
+                  <SpaceMark id={s.id} title={s.title} size="xl" onColor />
+                  <span className="space-card-title">{s.title}</span>
+                  <span className="space-card-desc">{s.description || 'No description'}</span>
+                  <span className="space-card-meta">{roleLabel(s.role)}</span>
                 </span>
               </button>
             </li>
