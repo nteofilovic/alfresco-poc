@@ -52,9 +52,14 @@ public class AlfrescoClient {
     }
 
     public JsonNode listChildren(String parentId, String where, int skip, int maxItems) {
+        return listChildren(parentId, where, skip, maxItems, "isFolder DESC,name ASC");
+    }
+
+    /** @param orderBy Alfresco orderBy expression; the raw response includes {@code list.pagination} */
+    public JsonNode listChildren(String parentId, String where, int skip, int maxItems, String orderBy) {
         return get("/nodes/" + enc(parentId) + "/children",
                 mapOf("skipCount", skip, "maxItems", maxItems, "where", where,
-                        "include", "properties,aspectNames", "orderBy", "isFolder DESC,name ASC"));
+                        "include", "properties,aspectNames", "orderBy", orderBy));
     }
 
     public JsonNode createFolder(String parentId, String name) {

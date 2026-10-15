@@ -14,8 +14,8 @@ import java.util.Map;
 /**
  * Extra rules for non-admins on /api/nodes/**. Who may read or write a node is decided by Alfresco
  * (calls carry the user's own ticket), so this only adds what ACLs don't express: the folder
- * structure of a space belongs to the admin: members cannot create plain folders (they create them from
- * folder templates instead) or delete, rename, move or copy folders, except the top folder of something
+ * structure of a space belongs to the admin: only space managers and collaborators create plain folders (everyone can also create them from
+ * folder templates) and members cannot delete, rename, move or copy folders, except the top folder of something
  * they created from a template; and the repository-wide endpoints (/recent, /root/children) and Alfresco aliases such
  * as -my- or -root- are admin-only, so users only reach content through their spaces.
  */
@@ -38,7 +38,9 @@ public class WorkspaceScopeInterceptor implements HandlerInterceptor {
 
         String method = request.getMethod();
         String uri = request.getRequestURI();
-        if ("POST".equals(method) && uri.endsWith("/folders")) return deny(response, FOLDERS_ADMIN_ONLY);
+        if ("POST".equals(method) && uri.endsWith("/folders") && !mayCreateFolderIn(nodeId)) {
+            return deny(response, "Only space managers and collaborators can create folders");
+        }
 
         boolean mayTouchFolder = "DELETE".equals(method)
                 || ("POST".equals(method) && (uri.endsWith("/move") || uri.endsWith("/copy")))
@@ -49,10 +51,25 @@ public class WorkspaceScopeInterceptor implements HandlerInterceptor {
             // A folder members created from a template (a Client, Property...) is theirs to rename, move
             // or delete; its fixed subfolders and anything an admin designed are not.
             boolean memberFolder = node.path("properties").path("cm:description").asText("")
-                    .startsWith(FolderTemplateService.TEMPLATE_MARK);
+                    .startsWith(FolderTemplateService.TEMPLATE_MARK)
+                    || FolderTemplateService.MEMBER_FOLDER_MARK.equals(node.path("properties").path("cm:description").asText(""));
             if (node.path("isFolder").asBoolean(false) && !memberFolder) return deny(response, FOLDERS_ADMIN_ONLY);
         }
         return true;
+    }
+
+    /** The caller's role in the space that holds {@code parentId} (path /Company Home/Sites/<id>/...) must be Manager or Collaborator. */
+    private boolean mayCreateFolderIn(String parentId) {
+        JsonNode elements = client.getNode(parentId, "path").path("entry").path("path").path("elements");
+        if (elements.size() < 3 || !"Sites".equals(elements.get(1).path("name").asText())) return false;
+        String siteId = elements.get(2).path("name").asText();
+        for (JsonNode e : client.listMySites(1000).path("list").path("entries")) {
+            if (siteId.equals(e.path("entry").path("id").asText())) {
+                String role = e.path("entry").path("role").asText("");
+                return "SiteManager".equals(role) || "SiteCollaborator".equals(role);
+            }
+        }
+        return false;
     }
 
     private static final String FOLDERS_ADMIN_ONLY = "Only administrators can change the folder structure";

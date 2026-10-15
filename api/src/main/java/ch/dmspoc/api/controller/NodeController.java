@@ -3,8 +3,10 @@ package ch.dmspoc.api.controller;
 import ch.dmspoc.api.config.AlfrescoProperties;
 import ch.dmspoc.api.dto.CreateFolderRequest;
 import ch.dmspoc.api.dto.NodeDto;
+import ch.dmspoc.api.dto.NodePage;
 import ch.dmspoc.api.dto.UpdateMetadataRequest;
 import ch.dmspoc.api.service.AlfrescoService;
+import jakarta.servlet.http.HttpSession;
 import jakarta.validation.Valid;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.HttpHeaders;
@@ -43,6 +45,16 @@ public class NodeController {
         return alfrescoService.listChildren(nodeId, skip, maxItems);
     }
 
+    /** Paged + sorted listing (folders first). sortBy: name|modifiedAt|owner|sizeInBytes; sortDir: asc|desc. */
+    @GetMapping("/{nodeId}/page")
+    public NodePage listChildrenPage(@PathVariable String nodeId,
+                                     @RequestParam(defaultValue = "0") int skip,
+                                     @RequestParam(defaultValue = "20") int maxItems,
+                                     @RequestParam(defaultValue = "name") String sortBy,
+                                     @RequestParam(defaultValue = "asc") String sortDir) {
+        return alfrescoService.listChildrenPage(nodeId, skip, maxItems, sortBy, sortDir);
+    }
+
     @GetMapping("/root/children")
     public List<NodeDto> listDefaultRoot(@RequestParam(defaultValue = "0") int skip,
                                           @RequestParam(defaultValue = "100") int maxItems) {
@@ -56,8 +68,10 @@ public class NodeController {
     }
 
     @PostMapping("/{parentId}/folders")
-    public NodeDto createFolder(@PathVariable String parentId, @Valid @RequestBody CreateFolderRequest request) {
-        return alfrescoService.createFolder(parentId, request.name());
+    public NodeDto createFolder(@PathVariable String parentId, @Valid @RequestBody CreateFolderRequest request,
+                                HttpSession session) {
+        boolean admin = Boolean.TRUE.equals(session.getAttribute(AuthController.SESSION_ADMIN_ATTR));
+        return alfrescoService.createFolder(parentId, request.name(), !admin);
     }
 
     public record FromTemplateRequest(

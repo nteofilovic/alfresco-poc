@@ -70,6 +70,47 @@ public class DocumentMergeService {
     }
 
     /**
+     * Renders every page of a (multi-page) TIFF into a PDF, one page per frame, each page sized to its
+     * image. Browsers cannot display TIFF, so the preview endpoint serves this instead.
+     */
+    public byte[] tiffToPdf(byte[] tiff) throws IOException {
+        try (PDDocument pdf = new PDDocument();
+             javax.imageio.stream.ImageInputStream in = ImageIO.createImageInputStream(new ByteArrayInputStream(tiff))) {
+            java.util.Iterator<javax.imageio.ImageReader> readers = ImageIO.getImageReaders(in);
+            if (!readers.hasNext()) {
+                throw new IOException("Unsupported or unreadable TIFF");
+            }
+            javax.imageio.ImageReader reader = readers.next();
+            try {
+                reader.setInput(in);
+                int pages = reader.getNumImages(true);
+                for (int i = 0; i < pages; i++) {
+                    BufferedImage image;
+                    try {
+                        image = reader.read(i);
+                    } catch (IOException | RuntimeException e) {
+                        continue; // a damaged or non-image frame must not hide the readable ones
+                    }
+                    PDPage page = new PDPage(new PDRectangle(image.getWidth(), image.getHeight()));
+                    pdf.addPage(page);
+                    PDImageXObject pdImage = LosslessFactory.createFromImage(pdf, image);
+                    try (PDPageContentStream cs = new PDPageContentStream(pdf, page)) {
+                        cs.drawImage(pdImage, 0, 0, image.getWidth(), image.getHeight());
+                    }
+                }
+            } finally {
+                reader.dispose();
+            }
+            if (pdf.getNumberOfPages() == 0) {
+                throw new IOException("TIFF has no readable pages");
+            }
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            pdf.save(out);
+            return out.toByteArray();
+        }
+    }
+
+    /**
      * Draws the image onto a single A4 page, scaled to fit with a small margin, preserving aspect ratio.
      * Decoding goes through ImageIO (with the TwelveMonkeys TIFF plugin on the classpath for scanned
      * TIFF receipts) rather than PDFBox's own format sniffing, so any format ImageIO can read works here.

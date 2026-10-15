@@ -36,6 +36,9 @@ public class FolderTemplateService {
      */
     public static final String TEMPLATE_MARK = "zapis-template:";
 
+    /** cm:description on a plain folder a space manager or collaborator created; they may rename, move and delete it. */
+    public static final String MEMBER_FOLDER_MARK = "zapis-member";
+
     private static final TypeReference<List<FolderTemplateDto>> LIST_TYPE = new TypeReference<>() {
     };
 

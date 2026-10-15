@@ -3,6 +3,7 @@ package ch.dmspoc.api.service;
 import ch.dmspoc.api.dto.FolderNode;
 import ch.dmspoc.api.dto.FolderTemplateDto;
 import ch.dmspoc.api.dto.NodeDto;
+import ch.dmspoc.api.dto.NodePage;
 import ch.dmspoc.api.exception.AlfrescoApiException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -51,8 +52,36 @@ public class AlfrescoService {
                 .toList();
     }
 
-    public NodeDto createFolder(String parentId, String name) {
-        return toNodeDto(client.createFolder(parentId, name).path("entry"));
+    private static final Map<String, String> SORT_FIELDS = Map.of(
+            "name", "name",
+            "modifiedAt", "modifiedAt",
+            "owner", "createdByUser.id",
+            "sizeInBytes", "content.sizeInBytes");
+
+    /** Folders first, then {@code sortBy} in {@code sortDir}, then name as tie-breaker. Bad values are a 400. */
+    public NodePage listChildrenPage(String parentId, int skip, int maxItems, String sortBy, String sortDir) {
+        String field = SORT_FIELDS.get(sortBy);
+        if (field == null) throw new AlfrescoApiException(400, "sortBy must be one of " + SORT_FIELDS.keySet());
+        if (!"asc".equalsIgnoreCase(sortDir) && !"desc".equalsIgnoreCase(sortDir)) {
+            throw new AlfrescoApiException(400, "sortDir must be asc or desc");
+        }
+        if (skip < 0) throw new AlfrescoApiException(400, "skip must be >= 0");
+        int max = Math.max(1, Math.min(100, maxItems));
+        String orderBy = "isFolder DESC," + field + " " + sortDir.toUpperCase()
+                + ("name".equals(field) ? "" : ",name ASC");
+        JsonNode list = client.listChildren(parentId, null, skip, max, orderBy).path("list");
+        List<NodeDto> items = StreamSupport.stream(list.path("entries").spliterator(), false)
+                .map(e -> toNodeDto(e.path("entry")))
+                .toList();
+        JsonNode pg = list.path("pagination");
+        return new NodePage(items, pg.path("totalItems").asInt(items.size()), skip, max,
+                pg.path("hasMoreItems").asBoolean(false));
+    }
+
+    /** @param memberFolder true when a non-admin creates it: tagged so they can later rename, move or delete it */
+    public NodeDto createFolder(String parentId, String name, boolean memberFolder) {
+        String mark = memberFolder ? FolderTemplateService.MEMBER_FOLDER_MARK : null;
+        return toNodeDto(client.createFolder(parentId, name, mark).path("entry"));
     }
 
     /**
@@ -183,6 +212,15 @@ public class AlfrescoService {
         String mimeType = entry.path("content").path("mimeType").asText(null);
         if (mimeType == null) {
             return Optional.empty();
+        }
+
+        // Browsers cannot display TIFF, so it is served as a PDF with one page per frame.
+        if ("image/tiff".equals(mimeType)) {
+            try {
+                return Optional.of(new PreviewResult(mergeService.tiffToPdf(client.getContent(nodeId)), "application/pdf"));
+            } catch (IOException e) {
+                return Optional.empty();
+            }
         }
 
         if ("application/pdf".equals(mimeType) || mimeType.startsWith("image/")) {
