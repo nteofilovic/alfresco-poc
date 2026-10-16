@@ -65,18 +65,23 @@ Three-layer separation, in call order `controller -> service (AlfrescoService) -
   ticket), admin create / delete / members (service account).
   Default visibility is PRIVATE, so non-members cannot read; PUBLIC/MODERATED sites are readable by everyone.
 - **`service/FolderTemplateService`** — folder templates (name + fixed subfolder tree), global to all spaces,
-  stored as one JSON file `Company Home/zapis-config/folder-templates.json` (service account). Admin CRUD at
+  stored as one JSON file `Company Home/zapis-config/folder-templates.json` (via `ConfigStore`, which reads
+  and writes the small JSON files in `zapis-config` with the service account). Admin CRUD at
   `/api/admin/folder-templates`, list at `GET /api/folder-templates`. Members instantiate with
   `POST /api/nodes/{parentId}/from-template` (`AlfrescoService.createFromTemplate`, user ticket): the top
   folder gets `cm:description = zapis-template:<name>` (`TEMPLATE_MARK`, members may rename/move/delete it),
   its subfolders get `STRUCTURE_MARK` (locked for non-admins).
+- **`service/AppearanceService`** — app styles (whole-app layouts `three-pane` | `command-bar`), stored in
+  `zapis-config/appearance.json`: admin default + `allowUserChoice` (`/api/admin/appearance`), each user's own
+  choice by username (`PUT /api/appearance/me`, 403 while locked). `GET /api/appearance` returns the effective
+  style; users' choices are kept while locked and apply again when choice is re-enabled.
 - **`service/TaskService`** — tasks on Alfresco's `activitiAdhoc` workflow (driven by the service account).
   A task carries its space (`zapisSiteId` variable, derived from the first attachment if not given) and each
   attachment is flagged `accessible` using the *user's* ticket, so non-members see "no access", not the name.
 - **`controller/`** — `NodeController` (browse/upload/download/preview/rename/move/copy/delete/metadata),
   `SearchController` (all spaces, optional `siteId`), `MergeController`, `SpaceController` (`GET /api/spaces`,
   admin `/api/admin/spaces` + members), `AuthController` (login/logout/me), `ProfileController` (own
-  profile + password), `AdminUserController` (`/api/admin/users`), `TaskController`.
+  profile + password), `AdminUserController` (`/api/admin/users`), `TaskController`, `AppearanceController`.
 - **`config/`** — `RestClientConfig` builds the service `RestClient`s (HTTP Basic, service account from
   `alfresco.username/password`) and the per-user ones (interceptor adds `Basic ROLE_TICKET:<ticket>` from
   `UserTicketContext`); `AlfrescoProperties` is the typed `alfresco.*` config; `CorsConfig` reads
@@ -113,9 +118,15 @@ Small, no router/state-library yet:
   (`Sidebar.View`), and inside a space the breadcrumb folder browser, upload, merge-to-PDF selection,
   split-view preview. Search is global (all spaces the user can read). `HomePage`, `SpacesPage`,
   `TasksPage` (one list of all the user's tasks, space chip + filter), `AdministrationPage`
-  (tabs Spaces | Users; Spaces tab = `SpacesAdmin` + `FolderTemplatesAdmin`, Users tab = `UsersAdmin`) and
-  `ProfilePage` live in `components/`. The Topbar "New" menu lists one "New <template>" entry per folder
-  template (`NewFromTemplateDialog`).
+  (tabs Spaces | Users | Application; Spaces tab = `SpacesAdmin` + `FolderTemplatesAdmin`, Users tab =
+  `UsersAdmin`, Application tab = `ApplicationAdmin`) and `ProfilePage` (details, Appearance, password) live in
+  `components/`. The Toolbar "New" menu lists one "New <template>" entry per folder template
+  (`NewFromTemplateDialog`).
+- **App styles** — `App.tsx` renders one of two shells around the same pages, from `/api/appearance`
+  (cached in localStorage to avoid a flash): `three-pane` = `Sidebar` + `Topbar` (search field), and
+  `command-bar` = `CommandBar` header (tabs, spaces menu) + `CommandPalette` (Ctrl/⌘ K: search, go to,
+  spaces, create in the current folder, recent documents, switch layout). Styles are listed in `appStyles.ts`;
+  `StylePicker` is the shared picker. CSS is scoped with `.shell-three-pane` / `.shell-command-bar`.
 - **`formatters.ts`** — display formatting helpers (dates, sizes, etc.).
 - Dev server proxies `/api` to `http://localhost:8081` (see `vite.config.ts`) — components call relative
   `/api/...` paths, never the Alfresco host directly.
