@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
-import { api, type Profile } from '../api'
+import { api, type Appearance, type AppStyle, type Profile } from '../api'
+import { styleLabel } from '../appStyles'
 import { apiErrorMessage } from '../formatters'
 import { Spinner } from './Spinner'
+import { StylePicker } from './StylePicker'
 
 interface Props {
   username: string
@@ -153,7 +155,71 @@ function PasswordForm() {
   )
 }
 
-export function ProfilePage({ username, onProfileUpdated }: Props) {
+/** The user's own layout; switching applies at once. Read-only when the administrator set one layout for everyone. */
+function AppearanceForm({ appearance, onChange }: { appearance: Appearance | null; onChange: (a: Appearance) => void }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [saved, setSaved] = useState<string | null>(null)
+
+  async function choose(style: AppStyle | null) {
+    setBusy(true)
+    setError(null)
+    setSaved(null)
+    try {
+      const updated = await api.setMyStyle(style)
+      onChange(updated)
+      setSaved(style ? `Layout changed to ${styleLabel(style)}.` : `You now follow the application default (${styleLabel(updated.defaultStyle)}).`)
+    } catch (err) {
+      setError(apiErrorMessage(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="admin-form appearance-form" aria-labelledby="profile-appearance-title">
+      <h3 id="profile-appearance-title">Appearance</h3>
+      {!appearance ? (
+        <Spinner size={20} label="Loading appearance…" />
+      ) : (
+        <>
+          <p className="admin-form-hint">
+            {appearance.allowUserChoice
+              ? 'Choose how the app is laid out for you. Other people keep their own layout.'
+              : `Your administrator has set the ${styleLabel(appearance.defaultStyle)} layout for everyone.`}
+          </p>
+          <StylePicker
+            label="Layout"
+            value={appearance.style}
+            defaultStyle={appearance.defaultStyle}
+            disabled={busy || !appearance.allowUserChoice}
+            onChange={choose}
+          />
+          {appearance.allowUserChoice && (
+            <p className="appearance-follow">
+              {appearance.userStyle ? (
+                <button type="button" className="link-button" disabled={busy} onClick={() => choose(null)}>
+                  Use the application default ({styleLabel(appearance.defaultStyle)})
+                </button>
+              ) : (
+                <span>You follow the application default. If your administrator changes it, your layout changes too.</span>
+              )}
+            </p>
+          )}
+          {error && <div className="login-error" role="alert">{error}</div>}
+          {saved && <div className="admin-success" role="status">{saved}</div>}
+        </>
+      )}
+    </div>
+  )
+}
+
+export function ProfilePage({
+  username,
+  onProfileUpdated,
+  appearance,
+  onAppearanceChange,
+}: Props & { appearance: Appearance | null; onAppearanceChange: (a: Appearance) => void }) {
   return (
     <section className="folder" aria-labelledby="profile-heading">
       <div className="page-head">
@@ -161,6 +227,7 @@ export function ProfilePage({ username, onProfileUpdated }: Props) {
       </div>
       <div className="sheet admin-sheet profile-sheet">
         <ProfileForm username={username} onProfileUpdated={onProfileUpdated} />
+        <AppearanceForm appearance={appearance} onChange={onAppearanceChange} />
         <PasswordForm />
       </div>
     </section>

@@ -1,10 +1,11 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { Bell, Search, X } from 'lucide-react'
-
-const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
+import { IS_MAC } from '../keyboard'
 
 interface Props {
+  /** Where the user is (breadcrumb trail), on the left of the bar. */
+  title?: ReactNode
   searchQuery: string
   hasSearchResults: boolean
   onSearchQueryChange: (value: string) => void
@@ -18,6 +19,7 @@ interface Props {
 
 /** Top bar: global search (Enter submits, Ctrl/⌘+K focuses), and notifications. */
 export function Topbar({
+  title,
   searchQuery,
   hasSearchResults,
   onSearchQueryChange,
@@ -42,6 +44,7 @@ export function Topbar({
 
   return (
     <header className="topbar">
+      <div className="topbar-title">{title}</div>
       <form className="search" onSubmit={onSearchSubmit} role="search">
         <label className="search-field">
           <Search size={18} strokeWidth={1.8} className="search-field-icon" aria-hidden="true" />
@@ -49,7 +52,7 @@ export function Topbar({
           <input
             ref={inputRef}
             type="search"
-            placeholder="Search names, contents and tags…"
+            placeholder="Search all documents"
             value={searchQuery}
             onChange={(e) => onSearchQueryChange(e.target.value)}
             onKeyDown={(e) => {
@@ -79,7 +82,7 @@ export function Topbar({
 }
 
 /** Bell button with a non-modal popover; closes on outside click or Esc. */
-function NotificationsButton({ count, children }: { count: number; children: (close: () => void) => ReactNode }) {
+export function NotificationsButton({ count, children }: { count: number; children: (close: () => void) => ReactNode }) {
   const [open, setOpen] = useState(false)
   const wrapRef = useRef<HTMLDivElement>(null)
   const buttonRef = useRef<HTMLButtonElement>(null)

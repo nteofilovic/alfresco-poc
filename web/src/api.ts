@@ -111,6 +111,20 @@ export interface Profile {
   email: string
 }
 
+/** Layout of the whole app: "three-pane" (sidebar, list, details) or "command-bar" (top bar and command palette). */
+export type AppStyle = 'three-pane' | 'command-bar'
+
+export interface Appearance {
+  /** The layout to render now. */
+  style: AppStyle
+  /** The user's own choice; null when they follow the application default. */
+  userStyle: AppStyle | null
+  defaultStyle: AppStyle
+  allowUserChoice: boolean
+}
+
+export type AppearanceSettings = Pick<Appearance, 'defaultStyle' | 'allowUserChoice'>
+
 export type TaskStatus = 'new' | 'in_progress' | 'on_hold' | 'done'
 export type TaskScope = 'assigned' | 'created'
 
@@ -380,6 +394,18 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ currentPassword, newPassword }),
     }).then((r) => handle<void>(r)),
+
+  getAppearance: () => fetch('/api/appearance', { credentials: 'include' }).then((r) => handle<Appearance>(r)),
+
+  /** null returns the user to the application default. */
+  setMyStyle: (style: AppStyle | null) =>
+    fetch('/api/appearance/me', jsonInit('PUT', { style })).then((r) => handle<Appearance>(r)),
+
+  getAppearanceSettings: () =>
+    fetch('/api/admin/appearance', { credentials: 'include' }).then((r) => handle<AppearanceSettings>(r)),
+
+  updateAppearanceSettings: (settings: AppearanceSettings) =>
+    fetch('/api/admin/appearance', jsonInit('PUT', settings)).then((r) => handle<AppearanceSettings>(r)),
 
   me: () => fetch('/api/auth/me', { credentials: 'include' }).then((r) => handle<AuthUser>(r)),
 
