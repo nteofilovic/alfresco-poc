@@ -2,8 +2,6 @@ package ch.dmspoc.api.controller;
 
 import ch.dmspoc.api.dto.NodeDto;
 import ch.dmspoc.api.service.AlfrescoService;
-import ch.dmspoc.api.service.WorkspaceService;
-import jakarta.servlet.http.HttpSession;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -20,12 +18,13 @@ public class SearchController {
     }
 
     /**
-     * Full-text + filename search backed by Alfresco's Solr index. Admins search the whole
-     * repository; everyone else only the workspace.
+     * Full-text + filename search backed by Alfresco's Solr index, across all spaces by default or
+     * within one ({@code siteId}). The search runs with the user's ticket, so Alfresco only returns
+     * what that user may read.
      */
     @GetMapping("/api/search")
-    public List<NodeDto> search(@RequestParam String q, @RequestParam(defaultValue = "50") int maxItems, HttpSession session) {
-        boolean admin = Boolean.TRUE.equals(session.getAttribute(AuthController.SESSION_ADMIN_ATTR));
-        return alfrescoService.search(q, maxItems, admin ? null : WorkspaceService.SITE_ID);
+    public List<NodeDto> search(@RequestParam String q, @RequestParam(defaultValue = "50") int maxItems,
+                                @RequestParam(required = false) String siteId) {
+        return alfrescoService.search(q, maxItems, siteId == null || siteId.isBlank() ? null : siteId);
     }
 }

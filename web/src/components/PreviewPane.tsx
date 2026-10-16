@@ -13,8 +13,8 @@ import {
   ZoomOut,
 } from 'lucide-react'
 import { api, type NodeDto } from '../api'
-import { formatBytes, formatDate, kindFor } from '../formatters'
-import { FileIcon } from './FileIcon'
+import { formatBytes, formatDate } from '../formatters'
+import { FileTile } from './FileIcon'
 import { Spinner } from './Spinner'
 import { EmptyState } from './EmptyState'
 
@@ -192,7 +192,7 @@ export function PreviewPane({ node, files, ratio, onRatioChange, expanded, onExp
 
       <header className="preview-header">
         <div className="preview-title">
-          <FileIcon kind={kindFor(node.name, node.isFolder)} size={20} />
+          <FileTile name={node.name} isFolder={node.isFolder} />
           <div className="preview-title-text">
             <p className="preview-name" title={node.name}>
               {node.name}

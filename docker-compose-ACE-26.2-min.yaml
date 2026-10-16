@@ -1,0 +1,176 @@
+# Minimal Alfresco Community 26.2 stack for the Zapis POC (React -> Spring Boot API -> Alfresco REST).
+# Same image tags as docker-compose-ACE-26.2.yaml, but without Share, Content App, Control Center,
+# Kibana and the Traefik proxy: Zapis only needs the repository REST APIs, search and transforms.
+# Needs ~6GB RAM. Start with: docker compose -f docker-compose-ACE-26.2-min.yaml up -d
+# Uses the same host ports as the other stacks, so run only one stack at a time.
+# Uses its own volumes (*-26-2-min), so it starts with an empty repository.
+#
+# Published ports:
+#   8080  Alfresco REST API  http://localhost:8080/alfresco/api/-default-/public/alfresco/versions/1
+#   8161  ActiveMQ console   (debug only, admin / admin)
+#   9200  Elasticsearch      (debug only)
+# Everything else talks over the internal compose network only.
+# Default Alfresco login: admin / admin
+# Search is Elasticsearch 8 fed by batch-indexing; there is no Solr service in 26.2.
+
+services:
+  postgres:
+    image: postgres:17.9
+    mem_limit: 512m
+    environment:
+      POSTGRES_DB: alfresco
+      POSTGRES_USER: alfresco
+      POSTGRES_PASSWORD: alfresco
+    command: postgres -c max_connections=300 -c log_min_messages=LOG
+    volumes:
+      - pg-data-26-2-min:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U alfresco"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  activemq:
+    image: alfresco/alfresco-activemq:6.2.6-jre17-rockylinux8
+    mem_limit: 1g
+    environment:
+      # ActiveMQ 6.2.x images in ACS 26+ require authentication; the repository below uses the same pair.
+      ACTIVEMQ_ADMIN_LOGIN: admin
+      ACTIVEMQ_ADMIN_PASSWORD: admin
+    ports:
+      - "8161:8161" # web console
+    healthcheck:
+      test: ["CMD", "/opt/activemq/bin/activemq", "query", "--objname", "type=Broker,brokerName=*,service=Health"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 20s
+
+  transform-core-aio:
+    image: alfresco/alfresco-transform-core-aio:5.4.3
+    mem_limit: 1536m
+    environment:
+      JAVA_OPTS: "-XX:MinRAMPercentage=50 -XX:MaxRAMPercentage=80"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/ready"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      activemq:
+        condition: service_healthy
+
+  elasticsearch:
+    image: elasticsearch:8.17.10
+    environment:
+      xpack.security.enabled: "false"
+      discovery.type: single-node
+      ES_JAVA_OPTS: "-Xms512m -Xmx1g"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    cap_add:
+      - IPC_LOCK
+    volumes:
+      - es-data-26-2-min:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -Eq '\"status\":\"(green|yellow)\"'"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  alfresco:
+    image: alfresco/alfresco-content-repository-community:26.2.0
+    mem_limit: 1900m
+    environment:
+      # Default keystore baked into the image; passwords are Alfresco's published defaults.
+      JAVA_TOOL_OPTIONS: >-
+        -Dencryption.keystore.type=JCEKS
+        -Dencryption.cipherAlgorithm=DESede/CBC/PKCS5Padding
+        -Dencryption.keyAlgorithm=DESede
+        -Dencryption.keystore.location=/usr/local/tomcat/shared/classes/alfresco/extension/keystore/keystore
+        -Dmetadata-keystore.password=mp6yc0UD9e
+        -Dmetadata-keystore.aliases=metadata
+        -Dmetadata-keystore.metadata.password=oKIWzVdEdA
+        -Dmetadata-keystore.metadata.algorithm=DESede
+      JAVA_OPTS: >-
+        -Ddb.driver=org.postgresql.Driver
+        -Ddb.username=alfresco
+        -Ddb.password=alfresco
+        -Ddb.url=jdbc:postgresql://postgres:5432/alfresco
+        -Dindex.subsystem.name=elasticsearch
+        -Delasticsearch.createIndexIfNotExists=true
+        -Delasticsearch.host=elasticsearch
+        -Delasticsearch.port=9200
+        -Dsolr.secureComms=secret
+        -Dsolr.sharedSecret=alfresco-poc-shared-secret
+        -Dshare.host=localhost
+        -Dshare.port=8080
+        -Dalfresco.host=localhost
+        -Dalfresco.port=8080
+        -Dcsrf.filter.enabled=false
+        -Daos.baseUrlOverwrite=http://localhost:8080/alfresco/aos
+        -Dmessaging.broker.url="failover:(nio://activemq:61616)?timeout=3000&jms.useCompression=true"
+        -Dmessaging.broker.username=admin
+        -Dmessaging.broker.password=admin
+        -Ddeployment.method=DOCKER_COMPOSE
+        -DlocalTransform.core-aio.url=http://transform-core-aio:8090/
+        -XX:MinRAMPercentage=50
+        -XX:MaxRAMPercentage=80
+    volumes:
+      - acs-data-26-2-min:/usr/local/tomcat/alf_data
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/alfresco/api/-default-/public/alfresco/versions/1/probes/-ready-"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 2m
+    depends_on:
+      postgres:
+        condition: service_healthy
+      activemq:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+      transform-core-aio:
+        condition: service_healthy
+
+  batch-indexing:
+    image: alfresco/alfresco-elasticsearch-batch-indexing:5.7.0
+    mem_limit: 1g
+    environment:
+      JAVA_OPTS: "-Xms256m -Xmx768m"
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/alfresco
+      SPRING_DATASOURCE_USERNAME: alfresco
+      SPRING_DATASOURCE_PASSWORD: alfresco
+      SPRING_ELASTICSEARCH_REST_URIS: http://elasticsearch:9200
+      ALFRESCO_ACCEPTEDCONTENTMEDIATYPESCACHE_BASEURL: http://transform-core-aio:8090/transform/config
+      ALFRESCO_ACS_URL: http://alfresco:8080
+      ALFRESCO_CONTENT_TRANSFORM_SHAREDSECRET: alfresco-poc-shared-secret
+      ALFRESCO_REINDEX_CONTINUOUS_POLLINGINTERVAL: 15s
+      ALFRESCO_REINDEX_CONTINUOUS_CATCHUPPOLLINGINTERVAL: 1s
+      ALFRESCO_REINDEX_CONTINUOUS_MAXWINDOW: 30m
+      ALFRESCO_REINDEX_CONTINUOUS_OVERLAP: 10m
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      alfresco:
+        condition: service_healthy
+      transform-core-aio:
+        condition: service_healthy
+
+volumes:
+  pg-data-26-2-min:
+  acs-data-26-2-min:
+  es-data-26-2-min:

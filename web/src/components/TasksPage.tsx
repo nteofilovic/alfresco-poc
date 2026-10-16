@@ -3,12 +3,14 @@ import { ClipboardList, Paperclip, Plus, RefreshCw, TriangleAlert } from 'lucide
 import {
   api,
   type NodeDto,
+  type Space,
   type TaskAssignee,
   type TaskAttachment,
   type TaskDto,
   type TaskScope,
 } from '../api'
 import { apiErrorMessage, formatDay, isOverdue } from '../formatters'
+import { spaceColor } from '../spaceColor'
 import { CreateTaskDialog } from './CreateTaskDialog'
 import { EmptyState } from './EmptyState'
 import { Spinner } from './Spinner'
@@ -22,8 +24,8 @@ interface Props {
   /** A task to open on arrival (deep link from a notice); cleared via onPendingConsumed. */
   pendingTaskId: string | null
   onPendingConsumed: () => void
-  /** Start folder for the attachment picker; null when no workspace exists. */
-  pickerRoot: { id: string; name: string } | null
+  /** Spaces the user can attach documents from (the picker starts in the chosen one). */
+  spaces: Space[]
   /** Id of the document currently open in the preview pane, if it came from a task. */
   activePreviewId: string | null
   onPreview: (node: NodeDto) => void
@@ -46,7 +48,7 @@ export function TasksPage({
   nameOf,
   pendingTaskId,
   onPendingConsumed,
-  pickerRoot,
+  spaces,
   activePreviewId,
   onPreview,
   onError,
@@ -57,6 +59,7 @@ export function TasksPage({
   const [reloadKey, setReloadKey] = useState(0)
   const [selected, setSelected] = useState<TaskDto | null>(null)
   const [creating, setCreating] = useState(false)
+  const [spaceFilter, setSpaceFilter] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -90,9 +93,16 @@ export function TasksPage({
     }
   }, [pendingTaskId, onPendingConsumed, onError])
 
+  // Spaces that actually occur in the loaded tasks, for the filter.
+  const taskSpaces = Array.from(
+    new Map((tasks ?? []).filter((t) => t.siteId).map((t) => [t.siteId as string, t.siteTitle ?? (t.siteId as string)])),
+  ).sort((a, b) => a[1].localeCompare(b[1]))
+  const visibleTasks = tasks && spaceFilter ? tasks.filter((t) => t.siteId === spaceFilter) : tasks
+
   function changeScope(next: TaskScope) {
     if (next === scope) return
     setScope(next)
+    setSpaceFilter('')
     setTasks(null)
     setLoadError(null)
   }
@@ -129,8 +139,8 @@ export function TasksPage({
   return (
     <section className="tasks" aria-labelledby="tasks-heading">
       <div className="tasks-head">
-        <h2 id="tasks-heading">Tasks</h2>
-        <button type="button" className="btn btn-primary" onClick={() => setCreating(true)}>
+        <h1 id="tasks-heading">Tasks</h1>
+        <button type="button" className="btn btn-primary btn-lg" onClick={() => setCreating(true)}>
           <Plus size={15} aria-hidden="true" />
           New task
         </button>
@@ -164,6 +174,19 @@ export function TasksPage({
                   </button>
                 ))}
               </div>
+              {taskSpaces.length > 0 && (
+                <label className="task-space-filter">
+                  <span className="sr-only">Filter by space</span>
+                  <select value={spaceFilter} onChange={(e) => setSpaceFilter(e.target.value)} aria-label="Filter by space">
+                    <option value="">All spaces</option>
+                    {taskSpaces.map(([id, title]) => (
+                      <option key={id} value={id}>
+                        {title}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <button
                 type="button"
                 className="btn btn-ghost toolbar-refresh"
@@ -186,10 +209,16 @@ export function TasksPage({
                   Try again
                 </button>
               </div>
-            ) : tasks.length === 0 ? (
+            ) : visibleTasks && visibleTasks.length === 0 ? (
               <EmptyState
                 icon={ClipboardList}
-                title={scope === 'assigned' ? 'Nothing assigned to you' : 'You haven’t created any tasks'}
+                title={
+                  spaceFilter
+                    ? 'No tasks in this space'
+                    : scope === 'assigned'
+                      ? 'Nothing assigned to you'
+                      : 'You haven’t created any tasks'
+                }
                 description={
                   scope === 'assigned'
                     ? 'New tasks from your colleagues will show up here.'
@@ -198,13 +227,20 @@ export function TasksPage({
               />
             ) : (
               <ul className="task-list">
-                {tasks.map((t) => {
+                {(visibleTasks ?? []).map((t) => {
                   const open = !t.resolved && t.status !== 'done'
                   const overdue = open && isOverdue(t.dueDate)
                   return (
                     <li key={t.id}>
                       <button type="button" className="task-row" onClick={() => setSelected(t)}>
-                        <span className="task-row-title">{t.title}</span>
+                        <span className="task-row-title">
+                          {t.title}
+                          {t.siteTitle && t.siteId && (
+                            <span className="task-space-chip" style={spaceColor(t.siteId)}>
+                              {t.siteTitle}
+                            </span>
+                          )}
+                        </span>
                         <TaskStatusChip status={t.status} />
                         <span className={`task-row-due${overdue ? ' task-overdue' : ''}`}>
                           {overdue && <TriangleAlert size={13} aria-hidden="true" />}
@@ -234,7 +270,7 @@ export function TasksPage({
       {creating && (
         <CreateTaskDialog
           assignees={assignees}
-          pickerRoot={pickerRoot}
+          spaces={spaces}
           onCreated={handleCreated}
           onCancel={() => setCreating(false)}
         />

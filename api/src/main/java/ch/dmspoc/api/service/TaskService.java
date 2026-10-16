@@ -5,6 +5,7 @@ import ch.dmspoc.api.dto.CreateTaskRequest;
 import ch.dmspoc.api.dto.TaskDto;
 import ch.dmspoc.api.dto.TaskNotificationDto;
 import ch.dmspoc.api.exception.AlfrescoApiException;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.JsonNode;
 
@@ -23,6 +24,9 @@ import java.util.Map;
 /**
  * Daily task list on top of Alfresco's embedded Activiti, using the stock "Assign a task"
  * (activitiAdhoc) process: one process per task, its "Adhoc Task" is the work item.
+ *
+ * <p>Documents are read with the logged-in user's ticket (Alfresco ACLs decide whether an attachment
+ * opens); the workflow engine itself is driven by the service account.
  *
  * <p>Every workflow call runs as the shared service account, so Alfresco believes the initiator
  * of every process is that account. The real creator is therefore kept in a process variable
@@ -43,6 +47,7 @@ public class TaskService {
     private static final String VAR_CREATOR = "zapisCreator";
     private static final String VAR_DESCRIPTION = "zapisDescription";
     private static final String VAR_MESSAGE = "zapisMessage";
+    private static final String VAR_SITE = "zapisSiteId";
 
     private static final Map<String, String> STATUS_TO_ALFRESCO = Map.of(
             "new", "Not Yet Started",
@@ -51,12 +56,27 @@ public class TaskService {
 
     private static final DateTimeFormatter ALFRESCO_DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSZ");
 
+    /** Workflow engine and people lookups: service account. */
     private final AlfrescoClient client;
-    private final WorkspaceService workspace;
+    /** Document reads: the logged-in user, so Alfresco's ACLs decide who may open an attachment. */
+    private final AlfrescoClient userClient;
+    private final SpaceService spaces;
 
-    public TaskService(AlfrescoClient client, WorkspaceService workspace) {
+    public TaskService(@Qualifier("serviceAlfrescoClient") AlfrescoClient client, AlfrescoClient userClient, SpaceService spaces) {
         this.client = client;
-        this.workspace = workspace;
+        this.userClient = userClient;
+        this.spaces = spaces;
+    }
+
+    /** Site titles, fetched at most once per request and only if a task needs one. */
+    private final class Titles {
+        private Map<String, String> titles;
+
+        String of(String siteId) {
+            if (siteId == null) return null;
+            if (titles == null) titles = spaces.titles();
+            return titles.getOrDefault(siteId, siteId);
+        }
     }
 
     // ---------------------------------------------------------------- queries
@@ -67,10 +87,11 @@ public class TaskService {
                 ? "(status='any' AND variables/" + VAR_CREATOR + " = 'd_text " + safe(user) + "')"
                 : "(status='any' AND assignee='" + safe(user) + "')";
         List<TaskDto> result = new ArrayList<>();
+        Titles titles = new Titles();
         for (JsonNode item : client.listTasks(where).path("list").path("entries")) {
             JsonNode task = item.path("entry");
             if (!ACTIVITY_WORK.equals(task.path("activityDefinitionId").asText())) continue;
-            TaskDto dto = toDto(task);
+            TaskDto dto = toDto(task, titles);
             if (dto != null) result.add(dto);
         }
         result.sort(Comparator.comparing(TaskDto::createdAt).reversed());
@@ -99,12 +120,17 @@ public class TaskService {
 
     // --------------------------------------------------------------- commands
 
-    public TaskDto create(CreateTaskRequest req, String user, boolean isAdmin) {
+    public TaskDto create(CreateTaskRequest req, String username) {
         String title = req.title().trim();
         String assignee = req.assignee().trim();
         assertAssignable(assignee);
         List<String> attachmentIds = req.attachmentIds() == null ? List.of() : req.attachmentIds();
-        for (String nodeId : attachmentIds) assertAttachable(nodeId, isAdmin);
+        String siteId = req.siteId() == null || req.siteId().isBlank() ? null : req.siteId().trim();
+        if (siteId != null && !siteId.matches("[a-zA-Z0-9-]+")) throw new AlfrescoApiException(400, "Invalid siteId");
+        for (String nodeId : attachmentIds) {
+            String attachmentSite = assertAttachable(nodeId);
+            if (siteId == null) siteId = attachmentSite;
+        }
 
         Map<String, Object> vars = new LinkedHashMap<>();
         vars.put("bpm_assignee", assignee);
@@ -116,7 +142,8 @@ public class TaskService {
 
         String processId = client.startProcess(PROCESS_KEY, vars).path("entry").path("id").asText();
         try {
-            client.setProcessVariable(processId, VAR_CREATOR, "d:text", user);
+            client.setProcessVariable(processId, VAR_CREATOR, "d:text", username);
+            if (siteId != null) client.setProcessVariable(processId, VAR_SITE, "d:text", siteId);
             if (req.description() != null && !req.description().isBlank()) {
                 client.setProcessVariable(processId, VAR_DESCRIPTION, "d:text", req.description().trim());
             }
@@ -185,7 +212,7 @@ public class TaskService {
     /** The task as a DTO; 404 if the process doesn't exist or isn't one of ours. */
     private TaskDto load(String processId) {
         JsonNode work = findWorkItem(processId);
-        TaskDto dto = work == null ? null : toDto(work);
+        TaskDto dto = work == null ? null : toDto(work, new Titles());
         if (dto == null) throw new AlfrescoApiException(404, "Task not found");
         return dto;
     }
@@ -214,7 +241,7 @@ public class TaskService {
     }
 
     /** Null when the work item belongs to a process this feature didn't start. */
-    private TaskDto toDto(JsonNode task) {
+    private TaskDto toDto(JsonNode task, Titles titles) {
         String processId = task.path("processId").asText();
         Map<String, JsonNode> vars = processVariables(processId);
         String creator = text(vars, VAR_CREATOR);
@@ -224,12 +251,28 @@ public class TaskService {
         String status = done ? "done" : statusOf(task.path("id").asText());
         List<TaskDto.Attachment> attachments = new ArrayList<>();
         for (JsonNode item : client.listProcessItems(processId).path("list").path("entries")) {
-            attachments.add(new TaskDto.Attachment(item.path("entry").path("id").asText(), item.path("entry").path("name").asText()));
+            String itemId = item.path("entry").path("id").asText();
+            // Alfresco's ACLs decide: a user outside the document's space neither opens it nor learns its name.
+            boolean accessible = canRead(itemId);
+            attachments.add(new TaskDto.Attachment(itemId, accessible ? item.path("entry").path("name").asText() : "", accessible));
         }
         String title = text(vars, "bpm_workflowDescription");
+        String siteId = text(vars, VAR_SITE);
         return new TaskDto(processId, title != null ? title : task.path("description").asText(""),
                 text(vars, VAR_DESCRIPTION), isoDate(task.path("startedAt").asText(null)), isoDate(task.path("dueAt").asText(null)),
-                creator, text(vars, "bpm_assignee"), status, text(vars, VAR_MESSAGE), attachments, done);
+                creator, text(vars, "bpm_assignee"), status, text(vars, VAR_MESSAGE), attachments, done,
+                siteId, titles.of(siteId));
+    }
+
+    /** Whether the logged-in user may read the node (ticket call: Alfresco answers 403/404 otherwise). */
+    private boolean canRead(String nodeId) {
+        try {
+            userClient.getNode(nodeId, null);
+            return true;
+        } catch (AlfrescoApiException e) {
+            if (e.getStatus() == 403 || e.getStatus() == 404) return false;
+            throw e;
+        }
     }
 
     private String statusOf(String taskId) {
@@ -271,20 +314,30 @@ public class TaskService {
         }
     }
 
-    /** Attachments must be files; non-admins may only attach files from inside the workspace. */
-    private void assertAttachable(String nodeId, boolean isAdmin) {
+    /**
+     * Attachments must be files the creator can read (checked with their own ticket, so Alfresco's ACLs
+     * apply). Returns the id of the space (Share site) the file lives in, or null if it is not in one.
+     */
+    private String assertAttachable(String nodeId) {
         JsonNode node;
-        if (isAdmin) {
-            try {
-                node = client.getNode(nodeId, null).path("entry");
-            } catch (AlfrescoApiException e) {
-                throw new AlfrescoApiException(400, "Attachment not found: " + nodeId);
-            }
-        } else {
-            node = workspace.findInWorkspace(nodeId)
-                    .orElseThrow(() -> new AlfrescoApiException(403, "Attachment is outside the workspace: " + nodeId));
+        try {
+            node = userClient.getNode(nodeId, "path").path("entry");
+        } catch (AlfrescoApiException e) {
+            if (e.getStatus() == 403) throw new AlfrescoApiException(403, "No access to attachment: " + nodeId);
+            if (e.getStatus() == 404 || e.getStatus() == 400) throw new AlfrescoApiException(400, "Attachment not found: " + nodeId);
+            throw e;
         }
         if (!node.path("isFile").asBoolean(false)) throw new AlfrescoApiException(400, "Only documents can be attached: " + nodeId);
+        return siteOf(node);
+    }
+
+    /** The site id in a node's path ({@code /Company Home/Sites/<site>/documentLibrary/...}), or null. */
+    private static String siteOf(JsonNode node) {
+        JsonNode elements = node.path("path").path("elements");
+        for (int i = 0; i < elements.size() - 1; i++) {
+            if ("Sites".equals(elements.get(i).path("name").asText())) return elements.get(i + 1).path("name").asText(null);
+        }
+        return null;
     }
 
     /** Alfresco date-time for a yyyy-MM-dd date (midnight UTC) or an ISO offset date-time; null when blank. */

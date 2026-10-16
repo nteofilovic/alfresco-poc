@@ -1,7 +1,9 @@
 package ch.dmspoc.api.service;
 
+import ch.dmspoc.api.dto.FolderNode;
+import ch.dmspoc.api.dto.FolderTemplateDto;
 import ch.dmspoc.api.dto.NodeDto;
-import ch.dmspoc.api.dto.SiteDto;
+import ch.dmspoc.api.dto.NodePage;
 import ch.dmspoc.api.exception.AlfrescoApiException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -27,11 +29,14 @@ public class AlfrescoService {
     private final AlfrescoClient client;
     private final ObjectMapper mapper;
     private final DocumentMergeService mergeService;
+    private final FolderTemplateService templates;
 
-    public AlfrescoService(AlfrescoClient client, ObjectMapper mapper, DocumentMergeService mergeService) {
+    public AlfrescoService(AlfrescoClient client, ObjectMapper mapper, DocumentMergeService mergeService,
+                           FolderTemplateService templates) {
         this.client = client;
         this.mapper = mapper;
         this.mergeService = mergeService;
+        this.templates = templates;
     }
 
     // --------------------------------------------------------------- browsing
@@ -47,8 +52,66 @@ public class AlfrescoService {
                 .toList();
     }
 
-    public NodeDto createFolder(String parentId, String name) {
-        return toNodeDto(client.createFolder(parentId, name).path("entry"));
+    private static final Map<String, String> SORT_FIELDS = Map.of(
+            "name", "name",
+            "modifiedAt", "modifiedAt",
+            "owner", "createdByUser.id",
+            "sizeInBytes", "content.sizeInBytes");
+
+    /** Folders first, then {@code sortBy} in {@code sortDir}, then name as tie-breaker. Bad values are a 400. */
+    public NodePage listChildrenPage(String parentId, int skip, int maxItems, String sortBy, String sortDir) {
+        String field = SORT_FIELDS.get(sortBy);
+        if (field == null) throw new AlfrescoApiException(400, "sortBy must be one of " + SORT_FIELDS.keySet());
+        if (!"asc".equalsIgnoreCase(sortDir) && !"desc".equalsIgnoreCase(sortDir)) {
+            throw new AlfrescoApiException(400, "sortDir must be asc or desc");
+        }
+        if (skip < 0) throw new AlfrescoApiException(400, "skip must be >= 0");
+        int max = Math.max(1, Math.min(100, maxItems));
+        String orderBy = "isFolder DESC," + field + " " + sortDir.toUpperCase()
+                + ("name".equals(field) ? "" : ",name ASC");
+        JsonNode list = client.listChildren(parentId, null, skip, max, orderBy).path("list");
+        List<NodeDto> items = StreamSupport.stream(list.path("entries").spliterator(), false)
+                .map(e -> toNodeDto(e.path("entry")))
+                .toList();
+        JsonNode pg = list.path("pagination");
+        return new NodePage(items, pg.path("totalItems").asInt(items.size()), skip, max,
+                pg.path("hasMoreItems").asBoolean(false));
+    }
+
+    /** @param memberFolder true when a non-admin creates it: tagged so they can later rename, move or delete it */
+    public NodeDto createFolder(String parentId, String name, boolean memberFolder) {
+        String mark = memberFolder ? FolderTemplateService.MEMBER_FOLDER_MARK : null;
+        return toNodeDto(client.createFolder(parentId, name, mark).path("entry"));
+    }
+
+    /**
+     * Creates a folder named {@code name} in {@code parentId} with the template's subfolders inside it, all
+     * with the member's ticket (Alfresco decides whether they may add content there). The top folder is
+     * tagged so members can rename/move/delete it; the subfolders are fixed structure.
+     */
+    public NodeDto createFromTemplate(String parentId, String templateId, String name) {
+        FolderTemplateDto template = templates.find(templateId)
+                .orElseThrow(() -> new AlfrescoApiException(404, "Folder template not found"));
+        JsonNode top = client.createFolder(parentId, name.trim(), FolderTemplateService.TEMPLATE_MARK + template.name()).path("entry");
+        try {
+            createTemplateChildren(top.path("id").asText(), template.folders());
+        } catch (RuntimeException e) {
+            try {
+                client.deleteNode(top.path("id").asText(), true);
+            } catch (RuntimeException ignored) {
+                // best effort; the original error is the useful one
+            }
+            throw e;
+        }
+        return toNodeDto(top);
+    }
+
+    private void createTemplateChildren(String parentId, List<FolderNode> folders) {
+        if (folders == null) return;
+        for (FolderNode folder : folders) {
+            String id = client.createFolder(parentId, folder.name(), SpaceService.STRUCTURE_MARK).path("entry").path("id").asText();
+            createTemplateChildren(id, folder.children());
+        }
     }
 
     public NodeDto uploadFile(String parentId, MultipartFile file, boolean overwrite) {
@@ -64,7 +127,7 @@ public class AlfrescoService {
     public NodeDto renameNode(String nodeId, String newName) {
         JsonNode current = client.getNode(nodeId, "properties").path("entry");
         if (current.path("isFolder").asBoolean(false)
-                && WorkspaceService.STRUCTURE_MARK.equals(current.path("properties").path("cm:description").asText(null))) {
+                && SpaceService.STRUCTURE_MARK.equals(current.path("properties").path("cm:description").asText(null))) {
             throw new AlfrescoApiException(403, "This folder is part of the workspace structure and cannot be renamed");
         }
         ObjectNode body = mapper.createObjectNode();
@@ -118,47 +181,6 @@ public class AlfrescoService {
                 .toList();
     }
 
-    // ------------------------------------------------------------------ sites
-
-    public SiteDto createSiteWithTemplate(String id, String title, String description, String visibility,
-                                           List<String> folderTemplate) {
-        client.createSite(id, title, description, visibility);
-        // "documentLibrary" is Alfresco's standard container id for a site's main folder.
-        String docLibId = client.getSiteContainer(id, "documentLibrary").path("entry").path("id").asText();
-
-        if (folderTemplate != null) {
-            for (String relativePath : folderTemplate) {
-                createFolderPath(docLibId, relativePath);
-            }
-        }
-        return new SiteDto(id, title, description, visibility, docLibId);
-    }
-
-    /** Creates "A/B/C" as nested folders under root, reusing any that already exist. */
-    private void createFolderPath(String rootId, String relativePath) {
-        String currentParent = rootId;
-        for (String segment : relativePath.split("/")) {
-            if (segment.isBlank()) continue;
-            currentParent = findOrCreateChildFolder(currentParent, segment.trim());
-        }
-    }
-
-    /**
-     * Alfresco's "where" filter on /children only supports isFolder/isFile/nodeType, not name, so
-     * matching by name is done client-side over the (typically small) list of existing subfolders.
-     */
-    private String findOrCreateChildFolder(String parentId, String name) {
-        JsonNode entries = client.listChildren(parentId, "(isFolder=true)", 0, 1000)
-                .path("list").path("entries");
-        for (JsonNode e : entries) {
-            JsonNode entry = e.path("entry");
-            if (name.equals(entry.path("name").asText())) {
-                return entry.path("id").asText();
-            }
-        }
-        return client.createFolder(parentId, name).path("entry").path("id").asText();
-    }
-
     // ---------------------------------------------------------------- preview
 
     public record PreviewResult(byte[] content, String mimeType) {
@@ -190,6 +212,15 @@ public class AlfrescoService {
         String mimeType = entry.path("content").path("mimeType").asText(null);
         if (mimeType == null) {
             return Optional.empty();
+        }
+
+        // Browsers cannot display TIFF, so it is served as a PDF with one page per frame.
+        if ("image/tiff".equals(mimeType)) {
+            try {
+                return Optional.of(new PreviewResult(mergeService.tiffToPdf(client.getContent(nodeId)), "application/pdf"));
+            } catch (IOException e) {
+                return Optional.empty();
+            }
         }
 
         if ("application/pdf".equals(mimeType) || mimeType.startsWith("image/")) {

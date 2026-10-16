@@ -10,6 +10,7 @@ public record CreateTaskRequest(
         String description,
         String dueDate,
         @NotBlank String assignee,
-        List<String> attachmentIds
+        List<String> attachmentIds,
+        String siteId // optional; derived from the first attachment when omitted
 ) {
 }

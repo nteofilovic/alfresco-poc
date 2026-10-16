@@ -19,12 +19,11 @@ export function TaskNotifications({ notifications, nameOf, onOpen, onDismiss }: 
           <p>
             <span className="activity-kind">Task completed</span>
             <span className="activity-text">
-              {' '}
               <strong>{nameOf(n.assignee)}</strong> completed “{n.title}”
               <span className="task-notice-time"> · {formatDate(n.resolvedAt)}</span>
             </span>
           </p>
-          <button type="button" className="btn btn-ghost" onClick={() => onOpen(n.taskId)}>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => onOpen(n.taskId)}>
             Open<span className="sr-only"> {n.title}</span>
           </button>
           <button

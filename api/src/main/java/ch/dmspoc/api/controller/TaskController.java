@@ -17,8 +17,8 @@ import java.util.List;
 
 /**
  * Daily task list. The acting user always comes from the HTTP session, never from the request;
- * /api/** is guarded by {@link ch.dmspoc.api.config.AuthInterceptor}, and since /api/tasks is not
- * covered by the workspace interceptor, {@link TaskService} enforces access itself.
+ * /api/** is guarded by {@link ch.dmspoc.api.config.AuthInterceptor}. Who may see or act on a task is
+ * enforced by {@link TaskService}; access to a task's documents is decided by Alfresco's ACLs.
  */
 @RestController
 @RequestMapping("/api/tasks")
@@ -62,7 +62,7 @@ public class TaskController {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public TaskDto create(@Valid @RequestBody CreateTaskRequest request, HttpSession session) {
-        return tasks.create(request, currentUser(session), Boolean.TRUE.equals(session.getAttribute(AuthController.SESSION_ADMIN_ATTR)));
+        return tasks.create(request, currentUser(session));
     }
 
     @PutMapping("/{id}")

@@ -98,6 +98,13 @@ export function useTaskActivity(username: string | null) {
   )
   const openTasks = (assigned ?? []).filter(isOpen)
   const overdueCount = openTasks.filter((t) => isOverdue(t.dueDate)).length
+  // The open task due soonest (undated ones last, newest first among them).
+  const nextTask =
+    [...openTasks].sort((a, b) => {
+      if (a.dueDate && b.dueDate) return a.dueDate.localeCompare(b.dueDate)
+      if (a.dueDate || b.dueDate) return a.dueDate ? -1 : 1
+      return b.createdAt.localeCompare(a.createdAt)
+    })[0] ?? null
 
   const dismissAssignment = useCallback(
     (id: string) => {
@@ -134,6 +141,7 @@ export function useTaskActivity(username: string | null) {
     completions,
     openCount: openTasks.length,
     overdueCount,
+    nextTask,
     /** Unseen notices, for the rail badge. */
     badgeCount: newAssignments.length + completions.length,
     assignees,

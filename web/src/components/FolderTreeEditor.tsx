@@ -1,14 +1,6 @@
 import { useState } from 'react'
-import type { FormEvent } from 'react'
 import { Folder, FolderPlus, Plus, X } from 'lucide-react'
-import { api, type FolderTemplateNode, type Workspace } from '../api'
-import { apiErrorMessage } from '../formatters'
-
-interface Draft {
-  id: string
-  name: string
-  children: Draft[]
-}
+import type { Draft } from './folderDraft'
 
 const ROOT = 'root'
 const ILLEGAL = /[\\/*?:"<>|]/
@@ -22,16 +14,11 @@ function remove(nodes: Draft[], id: string): Draft[] {
   return nodes.filter((n) => n.id !== id).map((n) => ({ ...n, children: remove(n.children, id) }))
 }
 
-function toPayload(nodes: Draft[]): FolderTemplateNode[] {
-  return nodes.map((n) => ({ name: n.name, children: toPayload(n.children) }))
-}
-
 function NameInput({ taken, onSubmit, onCancel }: { taken: string[]; onSubmit: (name: string) => void; onCancel: () => void }) {
   const [value, setValue] = useState('')
   const [error, setError] = useState<string | null>(null)
 
-  function submit(e: FormEvent) {
-    e.preventDefault()
+  function submit() {
     const name = value.trim()
     if (!name) return setError('Enter a folder name.')
     if (ILLEGAL.test(name)) return setError('A name cannot contain \\ / * ? : " < > |')
@@ -40,7 +27,7 @@ function NameInput({ taken, onSubmit, onCancel }: { taken: string[]; onSubmit: (
   }
 
   return (
-    <form className="ws-name-form" onSubmit={submit}>
+    <div className="ws-name-form">
       <input
         autoFocus
         value={value}
@@ -51,9 +38,18 @@ function NameInput({ taken, onSubmit, onCancel }: { taken: string[]; onSubmit: (
           setValue(e.target.value)
           setError(null)
         }}
-        onKeyDown={(e) => e.key === 'Escape' && onCancel()}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault() // would otherwise submit the surrounding dialog form
+            submit()
+          } else if (e.key === 'Escape') {
+            e.preventDefault() // cancel only this input, not the dialog
+            e.stopPropagation()
+            onCancel()
+          }
+        }}
       />
-      <button type="submit" className="btn btn-primary">
+      <button type="button" className="btn btn-primary" onClick={submit}>
         Add
       </button>
       <button type="button" className="btn btn-ghost" onClick={onCancel}>
@@ -64,7 +60,7 @@ function NameInput({ taken, onSubmit, onCancel }: { taken: string[]; onSubmit: (
           {error}
         </p>
       )}
-    </form>
+    </div>
   )
 }
 
@@ -114,73 +110,34 @@ function Tree({ nodes, adding, onStartAdd, onAdd, onCancel, onRemove }: TreeProp
   )
 }
 
-export function WorkspaceBuilder({ workspace, onCreated }: { workspace: Workspace | null; onCreated: (w: Workspace) => void }) {
-  const [tree, setTree] = useState<Draft[]>([])
+/** Editable folder tree: add a folder, click a folder to add sub-folders under it, remove with the X. */
+export function FolderTreeEditor({ value, onChange, addLabel = 'Add folder' }: { value: Draft[]; onChange: (next: Draft[]) => void; addLabel?: string }) {
   const [adding, setAdding] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
 
   function add(parentId: string, name: string) {
-    setTree((t) => insert(t, parentId, { id: crypto.randomUUID(), name, children: [] }))
+    onChange(insert(value, parentId, { id: crypto.randomUUID(), name, children: [] }))
     setAdding(null)
   }
 
-  async function create() {
-    setBusy(true)
-    setError(null)
-    try {
-      onCreated(await api.createWorkspace(toPayload(tree)))
-    } catch (e) {
-      setError(apiErrorMessage(e))
-    } finally {
-      setBusy(false)
-    }
-  }
-
   return (
-    <div className="admin-users">
-      <h3>Workspace folders</h3>
-      {workspace === null ? (
-        <p className="admin-form-hint">Loading…</p>
-      ) : workspace.exists ? (
-        <p className="admin-success">
-          The workspace has been created. Users see its folders on the Workspace page.
-        </p>
+    <div className="ws-builder">
+      {value.length > 0 && (
+        <Tree
+          nodes={value}
+          adding={adding}
+          onStartAdd={setAdding}
+          onAdd={add}
+          onCancel={() => setAdding(null)}
+          onRemove={(id) => onChange(remove(value, id))}
+        />
+      )}
+      {adding === ROOT ? (
+        <NameInput taken={value.map((n) => n.name)} onSubmit={(name) => add(ROOT, name)} onCancel={() => setAdding(null)} />
       ) : (
-        <>
-          <p className="admin-form-hint">
-            Design the folder structure users will see. Add a folder, then click any folder to add sub-folders under it. Nothing is
-            created until you press Create.
-          </p>
-          <div className="ws-builder">
-            {tree.length > 0 && (
-              <Tree
-                nodes={tree}
-                adding={adding}
-                onStartAdd={setAdding}
-                onAdd={add}
-                onCancel={() => setAdding(null)}
-                onRemove={(id) => setTree((t) => remove(t, id))}
-              />
-            )}
-            {adding === ROOT ? (
-              <NameInput taken={tree.map((n) => n.name)} onSubmit={(name) => add(ROOT, name)} onCancel={() => setAdding(null)} />
-            ) : (
-              <button type="button" className="btn btn-secondary" onClick={() => setAdding(ROOT)}>
-                <FolderPlus size={15} aria-hidden="true" />
-                Add
-              </button>
-            )}
-          </div>
-          {error && (
-            <div className="login-error" role="alert">
-              {error}
-            </div>
-          )}
-          <button type="button" className="btn btn-primary ws-create" disabled={busy || tree.length === 0} onClick={create}>
-            {busy ? 'Creating…' : 'Create'}
-          </button>
-        </>
+        <button type="button" className="btn btn-secondary" onClick={() => setAdding(ROOT)}>
+          <FolderPlus size={15} aria-hidden="true" />
+          {addLabel}
+        </button>
       )}
     </div>
   )

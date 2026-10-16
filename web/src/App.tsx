@@ -1,16 +1,28 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, CSSProperties, FormEvent } from 'react'
-import { api, type AuthUser, type NodeDto, type Workspace } from './api'
+import { api, type AuthUser, type FolderTemplate, type NodeDto, type NodeSortDir, type NodeSortKey, type Space } from './api'
 import { LoginForm } from './LoginForm'
-import { SearchBar, Topbar } from './components/Topbar'
+import { Sidebar, type View } from './components/Sidebar'
+import { Topbar } from './components/Topbar'
 import { Breadcrumbs } from './components/Breadcrumbs'
 import { Toolbar } from './components/Toolbar'
+import { SelectionBar } from './components/SelectionBar'
 import { FileTable } from './components/FileTable'
+import { Pager } from './components/Pager'
+import { PAGE_SIZES } from './paging'
+import { DetailsPanel } from './components/DetailsPanel'
 import { AdministrationPage } from './components/AdministrationPage'
 import { ProfilePage } from './components/ProfilePage'
 import { TasksPage } from './components/TasksPage'
-import { ActivityPanel } from './components/ActivityPanel'
+import { ActivityList } from './components/ActivityPanel'
+import { HomePage } from './components/HomePage'
+import { SpacesPage } from './components/SpacesPage'
+import { NewFolderDialog } from './components/NewFolderDialog'
+import { NewFromTemplateDialog } from './components/NewFromTemplateDialog'
+import { SpaceHero } from './components/SpaceHero'
+import { spaceColor } from './spaceColor'
 import { useTaskActivity } from './hooks/useTaskActivity'
+import { useRecentDocuments, type RecentDocument } from './hooks/useRecentDocuments'
 import { PreviewPane, RATIO_MAX, RATIO_MIN } from './components/PreviewPane'
 import { ConfirmDialog } from './components/ConfirmDialog'
 import { MergeDialog } from './components/MergeDialog'
@@ -19,8 +31,10 @@ import { FolderPickerDialog } from './components/FolderPickerDialog'
 import type { MenuAction } from './components/ActionsMenu'
 import { ErrorToast } from './components/ErrorToast'
 import { Spinner } from './components/Spinner'
-import { EmptyState } from './components/EmptyState'
-import { Copy, FileStack, FolderInput, FolderOpen, Trash2 } from 'lucide-react'
+import { downloadNodes } from './download'
+import { apiErrorMessage } from './formatters'
+import { ComparePreview } from './components/ComparePreview'
+import { Columns2, Copy, Download, FileStack, FolderInput, Trash2 } from 'lucide-react'
 import './App.css'
 
 interface Crumb {
@@ -28,37 +42,68 @@ interface Crumb {
   name: string
 }
 
-type View = 'workspace' | 'tasks' | 'browse' | 'admin' | 'profile'
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
 
 const PREVIEW_RATIO_KEY = 'zapis.previewRatio'
+const PAGE_SIZE_KEY = 'zapis.pageSize'
+const DEFAULT_PAGE_SIZE = 20
 
-const ROOT: Crumb = { id: '-my-', name: 'Home' }
+function savedPageSize(): number {
+  try {
+    const saved = Number(localStorage.getItem(PAGE_SIZE_KEY))
+    return (PAGE_SIZES as readonly number[]).includes(saved) ? saved : DEFAULT_PAGE_SIZE
+  } catch {
+    return DEFAULT_PAGE_SIZE
+  }
+}
 
 function App() {
   const [authChecked, setAuthChecked] = useState(false)
   const [username, setUsername] = useState<string | null>(null)
   const [firstName, setFirstName] = useState('')
   const [isAdmin, setIsAdmin] = useState(false)
-  const [path, setPath] = useState<Crumb[]>([]) // folders below the current view's root
-  const [rootOverride, setRootOverride] = useState<Crumb | null>(null)
-  const [workspace, setWorkspace] = useState<Workspace | null>(null)
+  const [path, setPath] = useState<Crumb[]>([]) // folders below the current space's document library
+  const [spaces, setSpaces] = useState<Space[] | null>(null)
+  const [currentSpace, setCurrentSpace] = useState<Space | null>(null)
+  const [templates, setTemplates] = useState<FolderTemplate[]>([])
+  const [templateToCreate, setTemplateToCreate] = useState<FolderTemplate | null>(null)
+  const [creatingFolder, setCreatingFolder] = useState(false)
+  const [comparing, setComparing] = useState(false)
   const [nodes, setNodes] = useState<NodeDto[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  // Server-side paging of the browsed folder (page is zero-based).
+  const [pageSize, setPageSize] = useState(savedPageSize)
+  const [page, setPage] = useState(0)
+  const [sortKey, setSortKey] = useState<NodeSortKey>('name')
+  const [sortDir, setSortDir] = useState<NodeSortDir>('asc')
+  const [totalItems, setTotalItems] = useState(0)
+  const [pagedFolderId, setPagedFolderId] = useState('')
+  // Latest paging inputs for loadFolder (refresh, upload, delete... reload whatever page is showing) and a
+  // counter so only the newest request may update the list.
+  const pagingRef = useRef({ page: 0, pageSize: DEFAULT_PAGE_SIZE, sortKey: 'name' as NodeSortKey, sortDir: 'asc' as NodeSortDir })
+  const loadSeq = useRef(0)
+  // Row of the freshly merged PDF, marked for ~2s.
+  const [highlightedId, setHighlightedId] = useState<string | null>(null)
+  const highlightTimer = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(highlightTimer.current), [])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<NodeDto[] | null>(null)
   const [bulkDialog, setBulkDialog] = useState<'merge' | 'copy' | 'move' | 'delete' | null>(null)
   const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null)
-  // The preview belongs to the listing it was opened from; it closes when view, folder or search results change.
+  // The selected file belongs to the listing it was opened from; it closes when view, folder or search results change.
+  // It shows in the details panel, and in the full preview pane once opened from there.
   const [preview, setPreview] = useState<{
     id: string
     view: View
     folderId: string
     searchResults: NodeDto[] | null
   } | null>(null)
-  // A document opened from a task; it takes over the preview pane until closed or the user leaves the Workspace view.
-  const [taskPreview, setTaskPreview] = useState<NodeDto | null>(null)
+  const [previewFull, setPreviewFull] = useState(false)
+  // A document opened from a task or the "Recently opened" card; it takes over the preview pane until closed
+  // or the user leaves the view it was opened from.
+  const [docPreview, setDocPreview] = useState<{ node: NodeDto; view: View } | null>(null)
   const [previewFiles, setPreviewFiles] = useState<NodeDto[]>([])
   const [previewRatio, setPreviewRatio] = useState(() => {
     const saved = Number(localStorage.getItem(PREVIEW_RATIO_KEY))
@@ -71,7 +116,7 @@ function App() {
   }, [])
   const [rowDialog, setRowDialog] = useState<{ kind: 'rename' | 'copy' | 'move'; node: NodeDto } | null>(null)
   const [nodeToDelete, setNodeToDelete] = useState<NodeDto | null>(null)
-  const [view, setView] = useState<View>('workspace')
+  const [view, setView] = useState<View>('home')
   const fileInputRef = useRef<HTMLInputElement>(null)
   // A task id to open when the Tasks page mounts (deep link from an activity notice).
   const [pendingTaskId, setPendingTaskId] = useState<string | null>(null)
@@ -79,25 +124,51 @@ function App() {
   const taskActivity = useTaskActivity(username)
   const refreshTaskActivity = taskActivity.refresh
   const resetTaskActivity = taskActivity.reset
+  const recentDocs = useRecentDocuments(username)
+  const addRecentDoc = recentDocs.add
 
-  // Admins' "Documents" view starts at their Home folder; the Workspace view starts at the workspace's document library.
-  const baseRoot: Crumb | null = view === 'workspace' ? (workspace?.rootId ? { id: workspace.rootId, name: workspace.name } : null) : ROOT
-  // A search hit outside the view's normal root (admins only) re-roots the trail at the repository root.
-  const root = rootOverride ?? baseRoot
+  // Inside a space the trail starts at that space's document library.
+  const root: Crumb | null = currentSpace ? { id: currentSpace.rootId, name: currentSpace.title } : null
   const breadcrumb = root ? [root, ...path] : []
-  const currentFolder = breadcrumb[breadcrumb.length - 1] ?? ROOT
+  const currentFolder: Crumb = breadcrumb[breadcrumb.length - 1] ?? { id: '', name: '' }
 
-  const loadFolder = useCallback(async (folderId: string) => {
+  // A different folder starts on its first page (adjusted during render so no request is made for the stale page).
+  if (pagedFolderId !== currentFolder.id) {
+    setPagedFolderId(currentFolder.id)
+    setPage(0)
+    setTotalItems(0)
+  }
+
+  useEffect(() => {
+    pagingRef.current = { page, pageSize, sortKey, sortDir }
+  }, [page, pageSize, sortKey, sortDir])
+
+  /** Loads the page currently selected (or `target`), ignoring the result if a newer load started meanwhile. */
+  const loadFolder = useCallback(async (folderId: string, target?: number) => {
+    const seq = ++loadSeq.current
+    const p = target ?? pagingRef.current.page
+    const { pageSize: size, sortKey: by, sortDir: dir } = pagingRef.current
     setLoading(true)
     setError(null)
+    let reloading = false
     try {
-      const children = await api.listChildren(folderId)
-      setNodes(children)
+      const result = await api.listChildrenPage(folderId, { skip: p * size, maxItems: size, sortBy: by, sortDir: dir })
+      if (seq !== loadSeq.current) return
+      if (result.items.length === 0 && result.totalItems > 0 && p > 0) {
+        // The page emptied (e.g. its last items were deleted): fall back to the last page that still exists.
+        reloading = true
+        setTotalItems(result.totalItems)
+        setPage(Math.ceil(result.totalItems / size) - 1)
+        return
+      }
+      setNodes(result.items)
+      setTotalItems(result.totalItems)
       setSelected(new Set())
     } catch (e) {
-      setError(String(e))
+      if (seq === loadSeq.current) setError(String(e))
     } finally {
-      setLoading(false)
+      // When falling back, the page change triggers the next load, which owns the loading state.
+      if (seq === loadSeq.current && !reloading) setLoading(false)
     }
   }, [])
 
@@ -116,29 +187,76 @@ function App() {
   useEffect(() => {
     if (!username) return
     api
-      .getWorkspace()
-      .then(setWorkspace)
-      .catch((e) => setError(String(e)))
+      .listSpaces()
+      .then(setSpaces)
+      .catch((e) => {
+        setSpaces([])
+        setError(String(e))
+      })
   }, [username])
+
+  const reloadTemplates = useCallback(() => {
+    api
+      .listFolderTemplates()
+      .then(setTemplates)
+      .catch(() => setTemplates([])) // the New menu just has no template entries
+  }, [])
+
+  useEffect(() => {
+    if (username) reloadTemplates()
+  }, [username, reloadTemplates])
 
   // Refetch whenever the user moves between views so notices and the rail badge stay current (no polling).
   useEffect(() => {
     if (username) refreshTaskActivity()
   }, [username, view, refreshTaskActivity])
 
-  const browsing = (view === 'browse' || view === 'workspace') && root !== null
+  const browsing = view === 'spaces' && root !== null
   useEffect(() => {
-    if (username && browsing) loadFolder(currentFolder.id)
-  }, [username, browsing, currentFolder.id, loadFolder])
+    if (username && browsing && pagedFolderId === currentFolder.id) loadFolder(currentFolder.id)
+  }, [username, browsing, currentFolder.id, pagedFolderId, page, pageSize, sortKey, sortDir, loadFolder])
+
+  function changePageSize(size: number) {
+    try {
+      localStorage.setItem(PAGE_SIZE_KEY, String(size))
+    } catch {
+      // storage unavailable: the choice just lasts for this session
+    }
+    setPageSize(size)
+    setPage(0)
+  }
+
+  function changeSort(key: NodeSortKey, dir: NodeSortDir) {
+    setSortKey(key)
+    setSortDir(dir)
+    setPage(0)
+  }
 
   function handleNavigate(next: View) {
-    if ((next === 'admin' || next === 'browse') && !isAdmin) return
+    if (next === 'admin' && !isAdmin) return
     setSearchResults(null)
     setPath([])
-    setRootOverride(null)
-    setTaskPreview(null)
+    setCurrentSpace(null)
+    setDocPreview(null)
     setView(next)
   }
+
+  function openSpace(space: Space) {
+    setSearchResults(null)
+    setSearchQuery('')
+    setPath([])
+    setDocPreview(null)
+    setCurrentSpace(space)
+    setView('spaces')
+  }
+
+  /** Admin created or removed a space: refresh the list the rest of the app shows. */
+  const reloadSpaces = useCallback(() => {
+    api
+      .listSpaces()
+      .then(setSpaces)
+      .catch((e) => setError(String(e)))
+  }, [])
 
   function openTasks(taskId?: string) {
     setPendingTaskId(taskId ?? null)
@@ -152,40 +270,42 @@ function App() {
   }
 
   async function handleLogout() {
-    await api.logout()
+    // Leave the app even if the request fails; a stale server session is better than a dead "Sign out" button.
+    await api.logout().catch(() => {})
     setUsername(null)
     setFirstName('')
     setIsAdmin(false)
-    setTaskPreview(null)
+    setDocPreview(null)
     setPendingTaskId(null)
     resetTaskActivity()
     setPath([])
-    setRootOverride(null)
-    setWorkspace(null)
+    setSpaces(null)
+    setTemplates([])
+    setCurrentSpace(null)
     setSearchResults(null)
-    setView('workspace')
+    setView('home')
   }
 
-  /** Where a search hit lives, as a trail relative to the view's root (or the repository root if it's outside it). */
-  function locate(node: NodeDto, includeSelf: boolean): { override: Crumb | null; trail: Crumb[] } {
+  /** Where a search hit lives: its space (matched by document-library id) and the folder trail below it. */
+  function locate(node: NodeDto, includeSelf: boolean): { space: Space | null; trail: Crumb[] } {
     const ancestors = node.ancestors ?? []
-    const at = baseRoot ? ancestors.findIndex((a) => a.id === baseRoot.id) : -1
-    const override = at >= 0 || ancestors.length === 0 ? null : { id: ancestors[0].id, name: ancestors[0].name }
-    const trail = ancestors.slice(at >= 0 ? at + 1 : 1).map((a) => ({ id: a.id, name: a.name }))
+    const at = ancestors.findIndex((a) => spaces?.some((s) => s.rootId === a.id))
+    const space = at >= 0 ? (spaces?.find((s) => s.rootId === ancestors[at].id) ?? null) : null
+    const trail = at >= 0 ? ancestors.slice(at + 1).map((a) => ({ id: a.id, name: a.name })) : []
     if (includeSelf) trail.push({ id: node.id, name: node.name })
-    return { override, trail }
+    return { space, trail }
   }
 
   const locationLabel = (node: NodeDto) => {
-    const { override, trail } = locate(node, false)
-    const start = override ?? baseRoot
-    return [...(start ? [start] : []), ...trail].map((c) => c.name).join(' / ')
+    const { space, trail } = locate(node, false)
+    return [...(space ? [space.title] : []), ...trail.map((c) => c.name)].join(' / ')
   }
 
   function openLocation(node: NodeDto, includeSelf: boolean) {
-    const { override, trail } = locate(node, includeSelf)
+    const { space, trail } = locate(node, includeSelf)
+    if (!space) return
     setSearchResults(null)
-    setRootOverride(override)
+    setCurrentSpace(space)
     setPath(trail)
   }
 
@@ -234,6 +354,8 @@ function App() {
 
   const uploadFiles = useCallback((files: File[]) => uploadFilesTo(currentFolder.id, files), [uploadFilesTo, currentFolder.id])
 
+  const pickFiles = useCallback(() => fileInputRef.current?.click(), [])
+
   async function handleUploadInput(e: ChangeEvent<HTMLInputElement>) {
     const files = e.target.files
     if (!files || files.length === 0) return
@@ -241,29 +363,17 @@ function App() {
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
-  const handleNewFolderIn = useCallback(
-    async (parentId: string) => {
-      const name = window.prompt('Folder name')
-      if (!name) return
-      setLoading(true)
-      try {
-        await api.createFolder(parentId, name)
-        if (parentId === currentFolder.id) await loadFolder(currentFolder.id)
-      } catch (err) {
-        setError(String(err))
-      } finally {
-        setLoading(false)
-      }
-    },
-    [currentFolder.id, loadFolder],
-  )
-
-  const handleNewFolder = useCallback(() => handleNewFolderIn(currentFolder.id), [handleNewFolderIn, currentFolder.id])
+  /** Throws on failure so the dialog can show the message inline. */
+  async function handleCreateFolder(name: string) {
+    await api.createFolder(currentFolder.id, name)
+    setCreatingFolder(false)
+    await loadFolder(currentFolder.id)
+  }
 
   async function handleDelete(node: NodeDto) {
     try {
       await api.deleteNode(node.id)
-      if (preview?.id === node.id) closePreview()
+      if (preview?.id === node.id) closeDetails()
       await loadFolder(currentFolder.id)
     } catch (err) {
       setError(String(err))
@@ -287,7 +397,7 @@ function App() {
     setError(null)
     try {
       await (kind === 'copy' ? api.copyNode(node.id, targetId) : api.moveNode(node.id, targetId))
-      if (kind === 'move' && preview?.id === node.id) closePreview()
+      if (kind === 'move' && preview?.id === node.id) closeDetails()
       setSelected(new Set())
       setRowDialog(null)
       await loadFolder(currentFolder.id)
@@ -299,11 +409,25 @@ function App() {
     }
   }
 
+  /** Throws on failure so the dialog can show the message inline. */
+  async function handleCreateFromTemplate(template: FolderTemplate, name: string) {
+    await api.createFromTemplate(currentFolder.id, template.id, name)
+    setTemplateToCreate(null)
+    await loadFolder(currentFolder.id)
+  }
+
   async function handleSearch(e: FormEvent) {
     e.preventDefault()
     if (!searchQuery.trim()) {
       setSearchResults(null)
       return
+    }
+    // Search is global (top bar, all spaces the user can read); results show in the Spaces listing.
+    if (view !== 'spaces') {
+      setCurrentSpace(null)
+      setPath([])
+      setDocPreview(null)
+      setView('spaces')
     }
     setLoading(true)
     setError(null)
@@ -327,23 +451,31 @@ function App() {
     })
   }
 
-  async function handleMerge(fileName: string) {
+  /** Selected files in the order the list shows (previewFiles is the table's sorted file order): the dialog's starting order. */
+  function mergeCandidates(): NodeDto[] {
+    const ordered = previewFiles.some((f) => selected.has(f.id)) ? previewFiles : displayedNodes
+    return ordered.filter((n) => selected.has(n.id))
+  }
+
+  async function handleMerge(fileName: string, orderedIds: string[]) {
     setBulkProgress({ done: 0, total: 1 })
     setError(null)
+    let mergedId: string | null = null
     try {
-      // Merge in the order the list shows (previewFiles is the table's sorted file order).
-      const ordered = previewFiles.some((f) => selected.has(f.id)) ? previewFiles : displayedNodes
-      await api.merge(
-        ordered.filter((n) => selected.has(n.id)).map((n) => n.id),
-        currentFolder.id,
-        fileName,
-      )
+      const merged = await api.merge(orderedIds, currentFolder.id, fileName)
+      mergedId = merged.id
     } catch (err) {
       setError(String(err))
     } finally {
       setBulkProgress(null)
       setBulkDialog(null)
       await loadFolder(currentFolder.id)
+    }
+    if (mergedId) {
+      // Briefly mark the new document's row once the reloaded list shows it.
+      window.clearTimeout(highlightTimer.current)
+      setHighlightedId(mergedId)
+      highlightTimer.current = window.setTimeout(() => setHighlightedId(null), 2000)
     }
   }
 
@@ -373,14 +505,32 @@ function App() {
   const displayedNodes = searchResults ?? nodes
   const selectedNodes = displayedNodes.filter((n) => selected.has(n.id))
   const allFilesSelected = selectedNodes.every((n) => n.isFile)
+  const canCompare = selectedNodes.length === 2 && allFilesSelected
   const progressLabel = (verb: string) => (bulkProgress ? `${verb} ${bulkProgress.done} of ${bulkProgress.total}…` : `${verb}…`)
+  const selectedFileIds = selectedNodes.filter((n) => n.isFile).map((n) => n.id)
+  // Copy/move/merge/delete pick or refresh the browsed folder, so search results only offer Download.
   const bulkActions: MenuAction[] = [
-    ...(allFilesSelected
-      ? [{ key: 'merge', label: 'Merge to PDF', icon: <FileStack size={15} aria-hidden="true" />, onSelect: () => setBulkDialog('merge') }]
+    {
+      key: 'download',
+      label: 'Download',
+      icon: <Download size={15} aria-hidden="true" />,
+      disabled: selectedFileIds.length === 0,
+      hint: 'Folders can’t be downloaded',
+      onSelect: () => downloadNodes(selectedFileIds),
+    },
+    ...(canCompare
+      ? [{ key: 'compare', label: 'Compare side by side', icon: <Columns2 size={15} aria-hidden="true" />, onSelect: () => setComparing(true) }]
       : []),
-    { key: 'copy', label: 'Copy to…', icon: <Copy size={15} aria-hidden="true" />, onSelect: () => setBulkDialog('copy') },
-    { key: 'move', label: 'Move to…', icon: <FolderInput size={15} aria-hidden="true" />, onSelect: () => setBulkDialog('move') },
-    { key: 'delete', label: 'Delete', icon: <Trash2 size={15} aria-hidden="true" />, danger: true, onSelect: () => setBulkDialog('delete') },
+    ...(searchResults
+      ? []
+      : [
+          ...(allFilesSelected && selectedNodes.length > 1
+            ? [{ key: 'merge', label: 'Merge to PDF', icon: <FileStack size={15} aria-hidden="true" />, onSelect: () => setBulkDialog('merge') }]
+            : []),
+          { key: 'copy', label: 'Copy', icon: <Copy size={15} aria-hidden="true" />, onSelect: () => setBulkDialog('copy') },
+          { key: 'move', label: 'Move', icon: <FolderInput size={15} aria-hidden="true" />, onSelect: () => setBulkDialog('move') },
+          { key: 'delete', label: 'Delete', icon: <Trash2 size={15} aria-hidden="true" />, danger: true, onSelect: () => setBulkDialog('delete') },
+        ]),
   ]
   const previewInScope =
     preview !== null &&
@@ -388,22 +538,48 @@ function App() {
     preview.folderId === currentFolder.id &&
     preview.searchResults === searchResults
   const previewId = previewInScope ? preview.id : null
-  const previewNode = previewId ? (previewFiles.find((f) => f.id === previewId) ?? null) : null
-  const showingTasks = view === 'tasks'
-  const taskPreviewNode = showingTasks ? taskPreview : null
-  const paneNode = taskPreviewNode ?? (browsing ? previewNode : null)
+  const previewNode = browsing && previewId ? (previewFiles.find((f) => f.id === previewId) ?? null) : null
+  const docPreviewNode = docPreview?.view === view ? docPreview.node : null
+  const paneNode = docPreviewNode ?? (previewFull ? previewNode : null)
+  const detailsNode = docPreviewNode ? null : previewNode
   const previewOpen = paneNode !== null
+  /** Closing the full preview returns to the details panel; closing a task/recent document closes it entirely. */
   const closePreview = useCallback(() => {
+    setPreviewFull(false)
+    setDocPreview(null)
+  }, [])
+  const closeDetails = useCallback(() => {
     setPreview(null)
-    setTaskPreview(null)
+    setPreviewFull(false)
   }, [])
   const selectPreview = useCallback(
     (n: NodeDto) => {
-      setTaskPreview(null)
+      setDocPreview(null)
       setPreview({ id: n.id, view, folderId: currentFolder.id, searchResults })
+      addRecentDoc(n)
     },
-    [view, currentFolder.id, searchResults],
+    [view, currentFolder.id, searchResults, addRecentDoc],
   )
+
+  async function openRecent(doc: RecentDocument) {
+    try {
+      const node = await api.getNode(doc.id)
+      setPreview(null)
+      setDocPreview({ node, view })
+      addRecentDoc(node)
+    } catch (e) {
+      recentDocs.remove(doc.id)
+      setError(`Couldn’t open ${doc.name}. ${apiErrorMessage(e)}`)
+    }
+  }
+
+  const userDisplayName = (() => {
+    const name = taskActivity.displayNameOf(username ?? '')
+    return name && name !== username ? name : firstName || username || ''
+  })()
+  // Viewers (site role SiteConsumer) can read but not add documents; Alfresco enforces it, this hides the buttons.
+  const canWrite = isAdmin || currentSpace?.role !== 'SiteConsumer'
+  const companyName = ''
 
   if (!authChecked) {
     return (
@@ -422,125 +598,179 @@ function App() {
       className={`shell${previewOpen ? ' has-preview' : ''}`}
       style={{ '--preview-ratio': previewRatio } as CSSProperties}
     >
-      <Topbar username={username} isAdmin={isAdmin} view={view} taskBadge={taskActivity.badgeCount} onNavigate={handleNavigate} onLogout={handleLogout} />
+      <Sidebar
+        displayName={userDisplayName}
+        isAdmin={isAdmin}
+        companyName={companyName}
+        view={view}
+        spaces={spaces ?? []}
+        currentSpaceId={currentSpace?.id ?? null}
+        onOpenSpace={openSpace}
+        taskBadge={taskActivity.badgeCount}
+        onNavigate={handleNavigate}
+        onLogout={handleLogout}
+      />
 
-      <main className="main">
-        {view !== 'admin' && view !== 'profile' && view !== 'tasks' && (
-          <SearchBar
-            searchQuery={searchQuery}
-            hasSearchResults={!!searchResults}
-            onSearchQueryChange={setSearchQuery}
-            onSearchSubmit={handleSearch}
-            onClearSearch={clearSearch}
-          />
-        )}
-
-        {error && <ErrorToast message={error} onDismiss={() => setError(null)} />}
-
-        {view === 'workspace' && !searchResults && (
-          <ActivityPanel
-            username={username}
-            firstName={firstName}
-            activity={taskActivity}
-            onOpenTasks={openTasks}
-            onError={setError}
-          />
-        )}
-
-        {view === 'tasks' ? (
-          <TasksPage
-            username={username}
-            assignees={taskActivity.assignees}
-            nameOf={taskActivity.nameOf}
-            pendingTaskId={pendingTaskId}
-            onPendingConsumed={clearPendingTask}
-            pickerRoot={workspace?.rootId ? { id: workspace.rootId, name: workspace.name } : null}
-            activePreviewId={taskPreviewNode?.id ?? null}
-            onPreview={(node) => {
-              setPreview(null)
-              setTaskPreview(node)
-            }}
-            onError={setError}
-          />
-        ) : view === 'profile' ? (
-          <ProfilePage username={username} onProfileUpdated={() => {}} />
-        ) : view === 'admin' ? (
-          isAdmin ? <AdministrationPage workspace={workspace} onWorkspaceCreated={setWorkspace} /> : null
-        ) : !root ? (
-          <section className="folder">
-            <div className="sheet">
-              {workspace === null ? (
-                <div className="admin-placeholder">
-                  <Spinner size={22} label="Loading workspace…" />
-                </div>
-              ) : (
-                <EmptyState
-                  icon={FolderOpen}
-                  title="The workspace isn't set up yet"
-                  description={
-                    isAdmin
-                      ? 'Open Administration and design the folder structure to get started.'
-                      : 'Ask an administrator to set up the workspace.'
-                  }
-                />
-              )}
-            </div>
-          </section>
-        ) : (
-          <section className="folder">
-            <Breadcrumbs
-              breadcrumb={breadcrumb}
-              searchResults={searchResults ? { query: searchQuery, count: searchResults.length } : null}
-              onNavigate={goToBreadcrumb}
-              onClearSearch={clearSearch}
+      <div
+        className={`content${view === 'spaces' && currentSpace ? ' in-space' : ''}`}
+        style={view === 'spaces' && currentSpace ? spaceColor(currentSpace.id) : undefined}
+      >
+        <Topbar
+          searchQuery={searchQuery}
+          hasSearchResults={!!searchResults}
+          onSearchQueryChange={setSearchQuery}
+          onSearchSubmit={handleSearch}
+          onClearSearch={clearSearch}
+          notificationCount={taskActivity.badgeCount}
+          notifications={(close) => (
+            <ActivityList
+              activity={taskActivity}
+              onOpenTasks={(id) => {
+                close()
+                openTasks(id)
+              }}
+              onError={setError}
             />
+          )}
+        />
+        <input type="file" multiple ref={fileInputRef} hidden onChange={handleUploadInput} aria-hidden="true" tabIndex={-1} />
 
-            <div className="sheet">
-              <Toolbar
-                fileInputRef={fileInputRef}
-                disabled={!!searchResults}
-                refreshing={loading}
-                canCreateFolder={isAdmin}
-                selectedCount={selectedNodes.length}
-                bulkActions={bulkActions}
-                onUpload={handleUploadInput}
-                onNewFolder={handleNewFolder}
-                onRefresh={() => loadFolder(currentFolder.id)}
-              />
+        <main className="main">
+          {error && <ErrorToast message={error} onDismiss={() => setError(null)} />}
 
-              <FileTable
-                nodes={displayedNodes}
-                loading={loading}
-                selected={selected}
-                isSearchView={!!searchResults}
-                searchQuery={searchQuery}
-                onToggleSelected={toggleSelected}
-                onToggleAll={toggleAll}
-                canSelectFolders={isAdmin}
-                onOpenFolder={openFolder}
-                getLocation={searchResults ? locationLabel : undefined}
-                onOpenLocation={(n) => openLocation(n, false)}
-                onPreview={selectPreview}
-                activeId={previewOpen && !taskPreviewNode ? previewId : null}
-                onFilesOrdered={setPreviewFiles}
-                onDelete={setNodeToDelete}
-                canDeleteFolders={isAdmin}
-                canManageFolders={isAdmin}
-                onRename={(node) => setRowDialog({ kind: 'rename', node })}
-                onCopy={(node) => setRowDialog({ kind: 'copy', node })}
-                onMove={(node) => setRowDialog({ kind: 'move', node })}
-                onDropFiles={uploadFiles}
-              />
-            </div>
-          </section>
-        )}
-      </main>
+          {view === 'home' && (
+            <HomePage
+              name={firstName || userDisplayName}
+              activity={taskActivity}
+              recent={recentDocs.docs}
+              spaces={spaces}
+              onOpenSpace={openSpace}
+              onOpenSpaces={() => handleNavigate('spaces')}
+              onOpenTasks={openTasks}
+              onOpenRecent={openRecent}
+            />
+          )}
+
+          {view === 'tasks' ? (
+            <TasksPage
+              username={username}
+              assignees={taskActivity.assignees}
+              nameOf={taskActivity.nameOf}
+              pendingTaskId={pendingTaskId}
+              onPendingConsumed={clearPendingTask}
+              spaces={spaces ?? []}
+              activePreviewId={docPreviewNode?.id ?? null}
+              onPreview={(node) => {
+                setPreview(null)
+                setDocPreview({ node, view: 'tasks' })
+              }}
+              onError={setError}
+            />
+          ) : view === 'profile' ? (
+            <ProfilePage username={username} onProfileUpdated={() => {}} />
+          ) : view === 'admin' ? (
+            isAdmin ? <AdministrationPage spaces={spaces} onSpacesChanged={reloadSpaces} onTemplatesChanged={reloadTemplates} /> : null
+          ) : view === 'home' ? null : !root && !searchResults ? (
+            <SpacesPage spaces={spaces} isAdmin={isAdmin} onOpen={openSpace} />
+          ) : (
+            <section className="folder" aria-label="Files">
+              {currentSpace && !searchResults && <SpaceHero space={currentSpace} onBack={() => handleNavigate('spaces')} />}
+              <div className="folder-head">
+                <Breadcrumbs
+                  hideTitle={!!currentSpace && path.length === 0}
+                  breadcrumb={breadcrumb}
+                  searchResults={searchResults ? { query: searchQuery, count: searchResults.length } : null}
+                  onNavigate={goToBreadcrumb}
+                  onClearSearch={clearSearch}
+                />
+                {!searchResults && (
+                  <Toolbar
+                    refreshing={loading}
+                    canCreateFolder={isAdmin || currentSpace?.role === 'SiteManager' || currentSpace?.role === 'SiteCollaborator'}
+                    canUpload={canWrite}
+                    templates={templates}
+                    onUpload={pickFiles}
+                    onNewFolder={() => setCreatingFolder(true)}
+                    onNewFromTemplate={(id) => setTemplateToCreate(templates.find((t) => t.id === id) ?? null)}
+                    onRefresh={() => loadFolder(currentFolder.id)}
+                  />
+                )}
+              </div>
+
+              {selectedNodes.length > 0 && (
+                <SelectionBar count={selectedNodes.length} actions={bulkActions} onClear={() => setSelected(new Set())} />
+              )}
+
+              <div className="folder-body">
+                <div className="sheet">
+                  <FileTable
+                    nodes={displayedNodes}
+                    loading={loading}
+                    selected={selected}
+                    highlightedId={highlightedId}
+                    isSearchView={!!searchResults}
+                    searchQuery={searchQuery}
+                    onToggleSelected={toggleSelected}
+                    onToggleAll={toggleAll}
+                    canSelectFolders={isAdmin}
+                    onOpenFolder={openFolder}
+                    getLocation={searchResults ? locationLabel : undefined}
+                    onOpenLocation={(n) => openLocation(n, false)}
+                    onPreview={(n) => {
+                      // A click in the list keeps the full preview if it is open, otherwise shows the details panel.
+                      if (!previewOpen) setPreviewFull(false)
+                      selectPreview(n)
+                    }}
+                    activeId={docPreviewNode ? null : previewId}
+                    onFilesOrdered={setPreviewFiles}
+                    ownerNameOf={taskActivity.displayNameOf}
+                    folderName={currentFolder.name}
+                    onUploadClick={pickFiles}
+                    onDelete={setNodeToDelete}
+                    canDeleteFolders={isAdmin}
+                    canManageFolders={isAdmin}
+                    onRename={(node) => setRowDialog({ kind: 'rename', node })}
+                    onCopy={(node) => setRowDialog({ kind: 'copy', node })}
+                    onMove={(node) => setRowDialog({ kind: 'move', node })}
+                    onDropFiles={uploadFiles}
+                    sortKey={searchResults ? undefined : sortKey}
+                    sortDir={searchResults ? undefined : sortDir}
+                    onSortChange={searchResults ? undefined : changeSort}
+                    footer={
+                      searchResults ? null : (
+                        <Pager
+                          totalItems={totalItems}
+                          page={page}
+                          pageSize={pageSize}
+                          onPageChange={setPage}
+                          onPageSizeChange={changePageSize}
+                        />
+                      )
+                    }
+                  />
+                </div>
+
+                {detailsNode && !previewOpen && (
+                  <DetailsPanel
+                    key={detailsNode.id}
+                    node={detailsNode}
+                    ownerName={detailsNode.createdByUser ? taskActivity.displayNameOf(detailsNode.createdByUser) : ''}
+                    location={searchResults ? locationLabel(detailsNode) : breadcrumb.map((c) => c.name).join(' / ')}
+                    onOpen={() => setPreviewFull(true)}
+                    onClose={closeDetails}
+                  />
+                )}
+              </div>
+            </section>
+          )}
+        </main>
+      </div>
 
       {paneNode && (
         <PreviewPane
           key={paneNode.id}
           node={paneNode}
-          files={taskPreviewNode ? [taskPreviewNode] : previewFiles}
+          files={docPreviewNode ? [docPreviewNode] : previewFiles}
           ratio={previewRatio}
           onRatioChange={changePreviewRatio}
           expanded={previewExpanded}
@@ -548,6 +778,19 @@ function App() {
           onSelect={selectPreview}
           onClose={closePreview}
         />
+      )}
+
+      {templateToCreate && (
+        <NewFromTemplateDialog
+          template={templateToCreate}
+          parentName={currentFolder.name}
+          onCreate={(name) => handleCreateFromTemplate(templateToCreate, name)}
+          onCancel={() => setTemplateToCreate(null)}
+        />
+      )}
+
+      {creatingFolder && (
+        <NewFolderDialog parentName={currentFolder.name} onCreate={handleCreateFolder} onCancel={() => setCreatingFolder(false)} />
       )}
 
       {nodeToDelete && (
@@ -585,9 +828,17 @@ function App() {
         />
       )}
 
+      {comparing && canCompare && (
+        <ComparePreview
+          left={selectedNodes[0]}
+          right={selectedNodes[1]}
+          onClose={() => setComparing(false)}
+        />
+      )}
+
       {browsing && !searchResults && bulkDialog === 'merge' && (
         <MergeDialog
-          count={selectedNodes.length}
+          files={mergeCandidates()}
           busy={bulkProgress !== null}
           onMerge={handleMerge}
           onCancel={() => setBulkDialog(null)}
@@ -596,7 +847,7 @@ function App() {
 
       {browsing && !searchResults && root && (bulkDialog === 'copy' || bulkDialog === 'move') && (
         <FolderPickerDialog
-          title={`${bulkDialog === 'copy' ? 'Copy' : 'Move'} ${selectedNodes.length} items to…`}
+          title={`${bulkDialog === 'copy' ? 'Copy' : 'Move'} ${plural(selectedNodes.length, 'item')} to…`}
           confirmLabel={bulkDialog === 'copy' ? 'Copy here' : 'Move here'}
           busyLabel={progressLabel(bulkDialog === 'copy' ? 'Copying' : 'Moving')}
           busy={bulkProgress !== null}
@@ -613,8 +864,8 @@ function App() {
 
       {browsing && !searchResults && bulkDialog === 'delete' && (
         <ConfirmDialog
-          title={`Delete ${selectedNodes.length} items?`}
-          message={`${selectedNodes.length} selected items will be deleted${selectedNodes.some((n) => n.isFolder) ? ', including everything inside any folders' : ''}.`}
+          title={`Delete ${plural(selectedNodes.length, 'item')}?`}
+          message={`${plural(selectedNodes.length, 'selected item')} will be deleted${selectedNodes.some((n) => n.isFolder) ? ', including everything inside any folders' : ''}.`}
           confirmLabel="Delete"
           busyLabel={progressLabel('Deleting')}
           onConfirm={() => runBulk((n) => api.deleteNode(n.id))}

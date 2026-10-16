@@ -6,6 +6,7 @@ import ch.dmspoc.api.exception.AlfrescoApiException;
 import ch.dmspoc.api.service.AlfrescoClient;
 import jakarta.servlet.http.HttpSession;
 import jakarta.validation.Valid;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 import tools.jackson.databind.JsonNode;
@@ -22,7 +23,7 @@ public class AdminUserController {
     private final AlfrescoClient alfrescoClient;
     private final AlfrescoProperties props;
 
-    public AdminUserController(AlfrescoClient alfrescoClient, AlfrescoProperties props) {
+    public AdminUserController(@Qualifier("serviceAlfrescoClient") AlfrescoClient alfrescoClient, AlfrescoProperties props) {
         this.alfrescoClient = alfrescoClient;
         this.props = props;
     }
