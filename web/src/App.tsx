@@ -1,12 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, CSSProperties, FormEvent } from 'react'
-import { api, type AuthUser, type FolderTemplate, type NodeDto, type NodeSortDir, type NodeSortKey, type Space } from './api'
+import { api, type Appearance, type AppStyle, type AuthUser, type FolderTemplate, type NodeDto, type NodeSortDir, type NodeSortKey, type Space } from './api'
 import { LoginForm } from './LoginForm'
 import { Sidebar, type View } from './components/Sidebar'
+import { SpacesColumn } from './components/SpacesColumn'
 import { Topbar } from './components/Topbar'
+import { TopHeader } from './components/TopHeader'
+import { CommandBar } from './components/CommandBar'
+import { FolderTree } from './components/FolderTree'
+import { SelectionPanel, SpaceInfoPanel } from './components/SelectionPanel'
+import { SpaceMembers } from './components/SpaceMembers'
+import { Trail, type TrailItem } from './components/Trail'
+import type { SelectionActions } from './selectionActions'
+import { roleLabel } from './spaceRoles'
+import { CommandPalette, type Command } from './components/CommandPalette'
+import { APP_STYLES, cacheAppStyle, cachedAppStyle } from './appStyles'
 import { Breadcrumbs } from './components/Breadcrumbs'
 import { Toolbar } from './components/Toolbar'
-import { SelectionBar } from './components/SelectionBar'
 import { FileTable } from './components/FileTable'
 import { Pager } from './components/Pager'
 import { PAGE_SIZES } from './paging'
@@ -19,7 +29,6 @@ import { HomePage } from './components/HomePage'
 import { SpacesPage } from './components/SpacesPage'
 import { NewFolderDialog } from './components/NewFolderDialog'
 import { NewFromTemplateDialog } from './components/NewFromTemplateDialog'
-import { SpaceHero } from './components/SpaceHero'
 import { spaceColor } from './spaceColor'
 import { useTaskActivity } from './hooks/useTaskActivity'
 import { useRecentDocuments, type RecentDocument } from './hooks/useRecentDocuments'
@@ -28,13 +37,25 @@ import { ConfirmDialog } from './components/ConfirmDialog'
 import { MergeDialog } from './components/MergeDialog'
 import { RenameDialog } from './components/RenameDialog'
 import { FolderPickerDialog } from './components/FolderPickerDialog'
-import type { MenuAction } from './components/ActionsMenu'
 import { ErrorToast } from './components/ErrorToast'
 import { Spinner } from './components/Spinner'
 import { downloadNodes } from './download'
 import { apiErrorMessage } from './formatters'
 import { ComparePreview } from './components/ComparePreview'
-import { Columns2, Copy, Download, FileStack, FolderInput, Trash2 } from 'lucide-react'
+import {
+  FileText,
+  FolderClosed,
+  FolderPlus,
+  House,
+  LayoutPanelLeft,
+  LogOut,
+  PanelTop,
+  Settings,
+  Shapes,
+  SquareCheckBig,
+  Upload,
+  UserRound,
+} from 'lucide-react'
 import './App.css'
 
 interface Crumb {
@@ -43,6 +64,14 @@ interface Crumb {
 }
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
+
+const VIEW_LABEL: Record<View, string> = {
+  home: 'Home',
+  spaces: 'Spaces',
+  tasks: 'Tasks',
+  admin: 'Administration',
+  profile: 'Profile',
+}
 
 const PREVIEW_RATIO_KEY = 'zapis.previewRatio'
 const PAGE_SIZE_KEY = 'zapis.pageSize'
@@ -117,6 +146,18 @@ function App() {
   const [rowDialog, setRowDialog] = useState<{ kind: 'rename' | 'copy' | 'move'; node: NodeDto } | null>(null)
   const [nodeToDelete, setNodeToDelete] = useState<NodeDto | null>(null)
   const [view, setView] = useState<View>('home')
+  // Layout of the whole app; until /api/appearance answers, the one last rendered in this browser.
+  const [appearance, setAppearance] = useState<Appearance | null>(null)
+  const [fallbackStyle, setFallbackStyle] = useState<AppStyle>(cachedAppStyle)
+  const appStyle = appearance?.style ?? fallbackStyle
+  // Colours and fonts follow the style; on <html> so dialogs and menus outside the shell get them too.
+  useEffect(() => {
+    document.documentElement.dataset.style = appStyle
+  }, [appStyle])
+  // Command-bar layout: Documents or Members of the open space.
+  const [spaceTab, setSpaceTab] = useState<'documents' | 'members'>('documents')
+  const [paletteOpen, setPaletteOpen] = useState(false)
+  const openPalette = useCallback(() => setPaletteOpen(true), [])
   const fileInputRef = useRef<HTMLInputElement>(null)
   // A task id to open when the Tasks page mounts (deep link from an activity notice).
   const [pendingTaskId, setPendingTaskId] = useState<string | null>(null)
@@ -195,6 +236,23 @@ function App() {
       })
   }, [username])
 
+  const applyAppearance = useCallback((a: Appearance) => {
+    setAppearance(a)
+    setFallbackStyle(a.style)
+    cacheAppStyle(a.style)
+  }, [])
+
+  const reloadAppearance = useCallback(() => {
+    api
+      .getAppearance()
+      .then(applyAppearance)
+      .catch(() => {}) // keep the layout already showing
+  }, [applyAppearance])
+
+  useEffect(() => {
+    if (username) reloadAppearance()
+  }, [username, reloadAppearance])
+
   const reloadTemplates = useCallback(() => {
     api
       .listFolderTemplates()
@@ -247,7 +305,19 @@ function App() {
     setPath([])
     setDocPreview(null)
     setCurrentSpace(space)
+    setSpaceTab('documents')
     setView('spaces')
+  }
+
+  /** Command-bar folder tree: open a folder anywhere (`trail` below the space's document library). */
+  function openTreeFolder(space: Space, trail: Crumb[]) {
+    if (space.id !== currentSpace?.id || view !== 'spaces') openSpace(space)
+    else {
+      setSearchResults(null)
+      setSearchQuery('')
+      setSpaceTab('documents')
+    }
+    setPath(trail)
   }
 
   /** Admin created or removed a space: refresh the list the rest of the app shows. */
@@ -275,6 +345,8 @@ function App() {
     setUsername(null)
     setFirstName('')
     setIsAdmin(false)
+    setAppearance(null)
+    setPaletteOpen(false)
     setDocPreview(null)
     setPendingTaskId(null)
     resetTaskActivity()
@@ -416,9 +488,14 @@ function App() {
     await loadFolder(currentFolder.id)
   }
 
-  async function handleSearch(e: FormEvent) {
+  function handleSearch(e: FormEvent) {
     e.preventDefault()
-    if (!searchQuery.trim()) {
+    runSearch(searchQuery)
+  }
+
+  async function runSearch(query: string) {
+    setSearchQuery(query)
+    if (!query.trim()) {
       setSearchResults(null)
       return
     }
@@ -432,7 +509,7 @@ function App() {
     setLoading(true)
     setError(null)
     try {
-      setSearchResults(await api.search(searchQuery))
+      setSearchResults(await api.search(query))
     } catch (err) {
       setError(String(err))
     } finally {
@@ -508,30 +585,30 @@ function App() {
   const canCompare = selectedNodes.length === 2 && allFilesSelected
   const progressLabel = (verb: string) => (bulkProgress ? `${verb} ${bulkProgress.done} of ${bulkProgress.total}…` : `${verb}…`)
   const selectedFileIds = selectedNodes.filter((n) => n.isFile).map((n) => n.id)
-  // Copy/move/merge/delete pick or refresh the browsed folder, so search results only offer Download.
-  const bulkActions: MenuAction[] = [
-    {
-      key: 'download',
-      label: 'Download',
-      icon: <Download size={15} aria-hidden="true" />,
-      disabled: selectedFileIds.length === 0,
-      hint: 'Folders can’t be downloaded',
-      onSelect: () => downloadNodes(selectedFileIds),
+  // Copy/move/merge/delete pick or refresh the browsed folder, so search results only offer Download (and Compare).
+  const nothingSelected = selectedNodes.length === 0
+  const selectFirst = 'Select documents first'
+  const inSearch = 'Open the containing folder first'
+  const selectionActions: SelectionActions = {
+    download: {
+      available: selectedFileIds.length > 0,
+      hint: nothingSelected ? selectFirst : 'Folders can’t be downloaded',
+      run: () => downloadNodes(selectedFileIds),
     },
-    ...(canCompare
-      ? [{ key: 'compare', label: 'Compare side by side', icon: <Columns2 size={15} aria-hidden="true" />, onSelect: () => setComparing(true) }]
-      : []),
-    ...(searchResults
-      ? []
-      : [
-          ...(allFilesSelected && selectedNodes.length > 1
-            ? [{ key: 'merge', label: 'Merge to PDF', icon: <FileStack size={15} aria-hidden="true" />, onSelect: () => setBulkDialog('merge') }]
-            : []),
-          { key: 'copy', label: 'Copy', icon: <Copy size={15} aria-hidden="true" />, onSelect: () => setBulkDialog('copy') },
-          { key: 'move', label: 'Move', icon: <FolderInput size={15} aria-hidden="true" />, onSelect: () => setBulkDialog('move') },
-          { key: 'delete', label: 'Delete', icon: <Trash2 size={15} aria-hidden="true" />, danger: true, onSelect: () => setBulkDialog('delete') },
-        ]),
-  ]
+    compare: { available: canCompare, hint: 'Select exactly two documents to compare them', run: () => setComparing(true) },
+    merge: {
+      available: !searchResults && allFilesSelected && selectedNodes.length > 1,
+      hint: searchResults
+        ? 'Open the folder to merge its documents.'
+        : allFilesSelected
+          ? 'Select two or more documents to merge them into one PDF.'
+          : 'Only documents can be merged; deselect the folders.',
+      run: () => setBulkDialog('merge'),
+    },
+    copy: { available: !nothingSelected && !searchResults, hint: nothingSelected ? selectFirst : inSearch, run: () => setBulkDialog('copy') },
+    move: { available: !nothingSelected && !searchResults, hint: nothingSelected ? selectFirst : inSearch, run: () => setBulkDialog('move') },
+    delete: { available: !nothingSelected && !searchResults, hint: nothingSelected ? selectFirst : inSearch, run: () => setBulkDialog('delete') },
+  }
   const previewInScope =
     preview !== null &&
     preview.view === view &&
@@ -579,7 +656,85 @@ function App() {
   })()
   // Viewers (site role SiteConsumer) can read but not add documents; Alfresco enforces it, this hides the buttons.
   const canWrite = isAdmin || currentSpace?.role !== 'SiteConsumer'
-  const companyName = ''
+  const canCreateFolder = isAdmin || currentSpace?.role === 'SiteManager' || currentSpace?.role === 'SiteCollaborator'
+
+  async function switchStyle(style: AppStyle) {
+    try {
+      applyAppearance(await api.setMyStyle(style))
+    } catch (err) {
+      setError(apiErrorMessage(err))
+    }
+  }
+
+  /** Everything the command palette offers; what is listed follows the user's role and the folder being browsed. */
+  function paletteCommands(): Command[] {
+    const icon = (C: typeof House) => <C size={16} strokeWidth={1.8} aria-hidden="true" />
+    const inFolder = browsing && !searchResults
+    return [
+      ...(inFolder && canWrite
+        ? [
+            { id: 'upload', group: 'Create', label: `Upload files to ${currentFolder.name}`, icon: icon(Upload), keywords: 'add document', run: pickFiles },
+            ...(canCreateFolder
+              ? [{ id: 'folder', group: 'Create', label: 'New folder', icon: icon(FolderPlus), run: () => setCreatingFolder(true) }]
+              : []),
+            ...templates.map((t) => ({
+              id: `template-${t.id}`,
+              group: 'Create',
+              label: `New ${t.name}`,
+              hint: 'Folder template',
+              icon: icon(Shapes),
+              run: () => setTemplateToCreate(t),
+            })),
+          ]
+        : []),
+      { id: 'go-home', group: 'Go to', label: 'Home', icon: icon(House), run: () => handleNavigate('home') },
+      { id: 'go-spaces', group: 'Go to', label: 'All spaces', icon: icon(FolderClosed), run: () => handleNavigate('spaces') },
+      { id: 'go-tasks', group: 'Go to', label: 'Tasks', icon: icon(SquareCheckBig), keywords: 'workflow assigned', run: () => openTasks() },
+      ...(isAdmin
+        ? [{ id: 'go-admin', group: 'Go to', label: 'Administration', icon: icon(Settings), keywords: 'users settings', run: () => handleNavigate('admin') }]
+        : []),
+      { id: 'go-profile', group: 'Go to', label: 'Profile', icon: icon(UserRound), keywords: 'password account appearance', run: () => handleNavigate('profile') },
+      ...(spaces ?? []).map((s) => ({
+        id: `space-${s.id}`,
+        group: 'Spaces',
+        label: s.title,
+        hint: s.description || undefined,
+        icon: <span className="cmdbar-space-dot" style={spaceColor(s.id)} aria-hidden="true" />,
+        keywords: 'space open',
+        run: () => openSpace(s),
+      })),
+      ...recentDocs.docs.slice(0, 5).map((d) => ({
+        id: `recent-${d.id}`,
+        group: 'Recently opened',
+        label: d.name,
+        icon: icon(FileText),
+        keywords: 'document recent',
+        run: () => openRecent(d),
+      })),
+      ...(appearance?.allowUserChoice
+        ? APP_STYLES.filter((s) => s.value !== appStyle).map((s) => ({
+            id: `style-${s.value}`,
+            group: 'Layout',
+            label: `Switch to the ${s.label} layout`,
+            icon: icon(s.value === 'three-pane' ? LayoutPanelLeft : PanelTop),
+            keywords: 'appearance style view',
+            run: () => switchStyle(s.value),
+          }))
+        : []),
+      { id: 'logout', group: 'Account', label: 'Sign out', icon: icon(LogOut), keywords: 'log out', run: handleLogout },
+    ]
+  }
+
+  const notificationsPanel = (close: () => void) => (
+    <ActivityList
+      activity={taskActivity}
+      onOpenTasks={(id) => {
+        close()
+        openTasks(id)
+      }}
+      onError={setError}
+    />
+  )
 
   if (!authChecked) {
     return (
@@ -593,46 +748,251 @@ function App() {
     return <LoginForm onLoggedIn={handleLoggedIn} />
   }
 
+  const threePane = appStyle === 'three-pane'
+  const inFolderView = view === 'spaces' && (root !== null || searchResults !== null)
+  const trail: TrailItem[] =
+    view !== 'spaces'
+      ? [{ label: VIEW_LABEL[view] }]
+      : [
+          { label: 'Spaces', onClick: () => handleNavigate('spaces') },
+          ...(searchResults
+            ? [{ label: 'Search results' }]
+            : breadcrumb.map((c, i) => ({ label: c.name, onClick: () => goToBreadcrumb(i) }))),
+        ]
+  const atSpaceRoot = currentSpace !== null && path.length === 0 && !searchResults
+  const role = currentSpace ? roleLabel(currentSpace.role).toLowerCase() : ''
+  const clearSelection = () => setSelected(new Set())
+
+  const fileTable = (
+    <FileTable
+      variant={threePane ? 'tile' : 'icon'}
+      nodes={displayedNodes}
+      loading={loading}
+      selected={selected}
+      highlightedId={highlightedId}
+      isSearchView={!!searchResults}
+      searchQuery={searchQuery}
+      onToggleSelected={toggleSelected}
+      onToggleAll={toggleAll}
+      canSelectFolders={isAdmin}
+      onOpenFolder={openFolder}
+      getLocation={searchResults ? locationLabel : undefined}
+      onOpenLocation={(n) => openLocation(n, false)}
+      onPreview={(n) => {
+        // A click in the list keeps the full preview if it is open, otherwise shows the details panel.
+        if (!previewOpen) setPreviewFull(false)
+        selectPreview(n)
+      }}
+      activeId={docPreviewNode ? null : previewId}
+      onFilesOrdered={setPreviewFiles}
+      ownerNameOf={taskActivity.displayNameOf}
+      folderName={currentFolder.name}
+      onUploadClick={pickFiles}
+      onDelete={setNodeToDelete}
+      canDeleteFolders={isAdmin}
+      canManageFolders={isAdmin}
+      onRename={(node) => setRowDialog({ kind: 'rename', node })}
+      onCopy={(node) => setRowDialog({ kind: 'copy', node })}
+      onMove={(node) => setRowDialog({ kind: 'move', node })}
+      onDropFiles={uploadFiles}
+      sortKey={searchResults ? undefined : sortKey}
+      sortDir={searchResults ? undefined : sortDir}
+      onSortChange={searchResults ? undefined : changeSort}
+      footer={
+        searchResults ? null : (
+          <Pager totalItems={totalItems} page={page} pageSize={pageSize} onPageChange={setPage} onPageSizeChange={changePageSize} />
+        )
+      }
+    />
+  )
+
+  const detailsPanel = detailsNode && (
+    <DetailsPanel
+      key={detailsNode.id}
+      node={detailsNode}
+      ownerName={detailsNode.createdByUser ? taskActivity.displayNameOf(detailsNode.createdByUser) : ''}
+      location={searchResults ? locationLabel(detailsNode) : breadcrumb.map((c) => c.name).join(' / ')}
+      onOpen={() => setPreviewFull(true)}
+      onClose={closeDetails}
+    />
+  )
+
+  const searchHead = searchResults && (
+    <Breadcrumbs
+      breadcrumb={breadcrumb}
+      searchResults={{ query: searchQuery, count: searchResults.length }}
+      onNavigate={goToBreadcrumb}
+      onClearSearch={clearSearch}
+    />
+  )
+
+  /** Three-pane: page title, the space's description and New / Upload above a card with the list. */
+  const threePaneFolder = (
+    <section className="folder" aria-label="Files">
+      <div className="folder-head">
+        {searchHead || (
+          <div className="page-head">
+            <h1>{currentFolder.name}</h1>
+            {atSpaceRoot ? (
+              currentSpace.description && <p>{currentSpace.description}</p>
+            ) : (
+              <p>In {breadcrumb.slice(0, -1).map((c) => c.name).join(' / ')}</p>
+            )}
+          </div>
+        )}
+        {!searchResults && (
+          <Toolbar
+            refreshing={loading}
+            canCreateFolder={canCreateFolder}
+            canUpload={canWrite}
+            templates={templates}
+            onUpload={pickFiles}
+            onNewFolder={() => setCreatingFolder(true)}
+            onNewFromTemplate={(id) => setTemplateToCreate(templates.find((t) => t.id === id) ?? null)}
+            onRefresh={() => loadFolder(currentFolder.id)}
+          />
+        )}
+      </div>
+      <div className="sheet">{fileTable}</div>
+    </section>
+  )
+
+  /** Command bar: trail, title with the user's role, description, Documents / Members tabs and a flat list. */
+  const showMembersTab = isAdmin && currentSpace !== null && !searchResults
+  const commandBarFolder = (
+    <section className="folder" aria-label="Files">
+      <Trail items={trail} chevrons />
+      {searchHead || (
+        <div className="cb-title">
+          <div className="cb-title-row">
+            <h1>{currentFolder.name}</h1>
+            {currentSpace && (
+              <span className="cb-role">
+                You are {/^[aeiou]/.test(role) ? 'an' : 'a'} {role}
+              </span>
+            )}
+          </div>
+          {atSpaceRoot && currentSpace.description && <p className="cb-desc">{currentSpace.description}</p>}
+        </div>
+      )}
+      {showMembersTab && (
+        <div className="cb-tabs" role="tablist" aria-label={`${currentSpace.title} sections`}>
+          {(['documents', 'members'] as const).map((t) => (
+            <button
+              key={t}
+              type="button"
+              role="tab"
+              aria-selected={spaceTab === t}
+              className={`cb-tab${spaceTab === t ? ' active' : ''}`}
+              onClick={() => setSpaceTab(t)}
+            >
+              {t === 'documents' ? 'Documents' : 'Members'}
+            </button>
+          ))}
+        </div>
+      )}
+      {showMembersTab && spaceTab === 'members' ? (
+        <SpaceMembers spaceId={currentSpace.id} />
+      ) : (
+        <div className="folder-body">
+          <div className="sheet">{fileTable}</div>
+          {!previewOpen && detailsPanel}
+        </div>
+      )}
+    </section>
+  )
+
+  const sidePanel =
+    threePane && inFolderView && !previewOpen ? (
+      selectedNodes.length > 0 ? (
+        <SelectionPanel selected={selectedNodes} actions={selectionActions} onClear={clearSelection} />
+      ) : detailsNode ? (
+        <aside className="side-panel">{detailsPanel}</aside>
+      ) : currentSpace && !searchResults ? (
+        <SpaceInfoPanel space={currentSpace} />
+      ) : null
+    ) : null
+
   return (
     <div
-      className={`shell${previewOpen ? ' has-preview' : ''}`}
+      className={`shell shell-${appStyle}${previewOpen ? ' has-preview' : ''}`}
       style={{ '--preview-ratio': previewRatio } as CSSProperties}
     >
-      <Sidebar
-        displayName={userDisplayName}
-        isAdmin={isAdmin}
-        companyName={companyName}
-        view={view}
-        spaces={spaces ?? []}
-        currentSpaceId={currentSpace?.id ?? null}
-        onOpenSpace={openSpace}
-        taskBadge={taskActivity.badgeCount}
-        onNavigate={handleNavigate}
-        onLogout={handleLogout}
-      />
-
-      <div
-        className={`content${view === 'spaces' && currentSpace ? ' in-space' : ''}`}
-        style={view === 'spaces' && currentSpace ? spaceColor(currentSpace.id) : undefined}
-      >
-        <Topbar
-          searchQuery={searchQuery}
-          hasSearchResults={!!searchResults}
-          onSearchQueryChange={setSearchQuery}
-          onSearchSubmit={handleSearch}
-          onClearSearch={clearSearch}
-          notificationCount={taskActivity.badgeCount}
-          notifications={(close) => (
-            <ActivityList
-              activity={taskActivity}
-              onOpenTasks={(id) => {
-                close()
-                openTasks(id)
-              }}
-              onError={setError}
+      {threePane ? (
+        <>
+          <Sidebar
+            displayName={userDisplayName}
+            isAdmin={isAdmin}
+            view={view}
+            taskBadge={taskActivity.badgeCount}
+            onNavigate={handleNavigate}
+            onLogout={handleLogout}
+          />
+          {view === 'spaces' && !previewOpen && (
+            <SpacesColumn
+              spaces={spaces}
+              currentSpaceId={currentSpace?.id ?? null}
+              isAdmin={isAdmin}
+              onOpenSpace={openSpace}
+              onOpenAll={() => handleNavigate('spaces')}
+              onNewSpace={() => handleNavigate('admin')}
             />
           )}
-        />
+        </>
+      ) : (
+        <>
+          <div className="cb-top">
+            <TopHeader
+              displayName={userDisplayName}
+              view={view}
+              onNavigate={handleNavigate}
+              onLogout={handleLogout}
+              searchQuery={searchResults ? searchQuery : ''}
+              onOpenPalette={openPalette}
+              notificationCount={taskActivity.badgeCount}
+              notifications={notificationsPanel}
+            />
+            <CommandBar
+              inFolder={browsing && !searchResults}
+              canUpload={canWrite}
+              canCreateFolder={canCreateFolder}
+              templates={templates}
+              onUpload={pickFiles}
+              onNewFolder={() => setCreatingFolder(true)}
+              onNewFromTemplate={(id) => setTemplateToCreate(templates.find((t) => t.id === id) ?? null)}
+              selectedCount={selectedNodes.length}
+              actions={selectionActions}
+              onClearSelection={clearSelection}
+            />
+          </div>
+          <FolderTree
+            view={view}
+            isAdmin={isAdmin}
+            taskBadge={taskActivity.badgeCount}
+            spaces={spaces}
+            currentSpaceId={currentSpace?.id ?? null}
+            path={path}
+            refreshKey={nodes}
+            onNavigate={handleNavigate}
+            onOpenAllSpaces={() => handleNavigate('spaces')}
+            onOpen={openTreeFolder}
+          />
+        </>
+      )}
+
+      <div className="content">
+        {threePane && (
+          <Topbar
+            title={<Trail items={trail} />}
+            searchQuery={searchQuery}
+            hasSearchResults={!!searchResults}
+            onSearchQueryChange={setSearchQuery}
+            onSearchSubmit={handleSearch}
+            onClearSearch={clearSearch}
+            notificationCount={taskActivity.badgeCount}
+            notifications={notificationsPanel}
+          />
+        )}
         <input type="file" multiple ref={fileInputRef} hidden onChange={handleUploadInput} aria-hidden="true" tabIndex={-1} />
 
         <main className="main">
@@ -667,104 +1027,27 @@ function App() {
               onError={setError}
             />
           ) : view === 'profile' ? (
-            <ProfilePage username={username} onProfileUpdated={() => {}} />
+            <ProfilePage username={username} onProfileUpdated={() => {}} appearance={appearance} onAppearanceChange={applyAppearance} />
           ) : view === 'admin' ? (
-            isAdmin ? <AdministrationPage spaces={spaces} onSpacesChanged={reloadSpaces} onTemplatesChanged={reloadTemplates} /> : null
-          ) : view === 'home' ? null : !root && !searchResults ? (
+            isAdmin ? (
+              <AdministrationPage
+                spaces={spaces}
+                onSpacesChanged={reloadSpaces}
+                onTemplatesChanged={reloadTemplates}
+                onAppearanceChanged={reloadAppearance}
+              />
+            ) : null
+          ) : view === 'home' ? null : !inFolderView ? (
             <SpacesPage spaces={spaces} isAdmin={isAdmin} onOpen={openSpace} />
+          ) : threePane ? (
+            threePaneFolder
           ) : (
-            <section className="folder" aria-label="Files">
-              {currentSpace && !searchResults && <SpaceHero space={currentSpace} onBack={() => handleNavigate('spaces')} />}
-              <div className="folder-head">
-                <Breadcrumbs
-                  hideTitle={!!currentSpace && path.length === 0}
-                  breadcrumb={breadcrumb}
-                  searchResults={searchResults ? { query: searchQuery, count: searchResults.length } : null}
-                  onNavigate={goToBreadcrumb}
-                  onClearSearch={clearSearch}
-                />
-                {!searchResults && (
-                  <Toolbar
-                    refreshing={loading}
-                    canCreateFolder={isAdmin || currentSpace?.role === 'SiteManager' || currentSpace?.role === 'SiteCollaborator'}
-                    canUpload={canWrite}
-                    templates={templates}
-                    onUpload={pickFiles}
-                    onNewFolder={() => setCreatingFolder(true)}
-                    onNewFromTemplate={(id) => setTemplateToCreate(templates.find((t) => t.id === id) ?? null)}
-                    onRefresh={() => loadFolder(currentFolder.id)}
-                  />
-                )}
-              </div>
-
-              {selectedNodes.length > 0 && (
-                <SelectionBar count={selectedNodes.length} actions={bulkActions} onClear={() => setSelected(new Set())} />
-              )}
-
-              <div className="folder-body">
-                <div className="sheet">
-                  <FileTable
-                    nodes={displayedNodes}
-                    loading={loading}
-                    selected={selected}
-                    highlightedId={highlightedId}
-                    isSearchView={!!searchResults}
-                    searchQuery={searchQuery}
-                    onToggleSelected={toggleSelected}
-                    onToggleAll={toggleAll}
-                    canSelectFolders={isAdmin}
-                    onOpenFolder={openFolder}
-                    getLocation={searchResults ? locationLabel : undefined}
-                    onOpenLocation={(n) => openLocation(n, false)}
-                    onPreview={(n) => {
-                      // A click in the list keeps the full preview if it is open, otherwise shows the details panel.
-                      if (!previewOpen) setPreviewFull(false)
-                      selectPreview(n)
-                    }}
-                    activeId={docPreviewNode ? null : previewId}
-                    onFilesOrdered={setPreviewFiles}
-                    ownerNameOf={taskActivity.displayNameOf}
-                    folderName={currentFolder.name}
-                    onUploadClick={pickFiles}
-                    onDelete={setNodeToDelete}
-                    canDeleteFolders={isAdmin}
-                    canManageFolders={isAdmin}
-                    onRename={(node) => setRowDialog({ kind: 'rename', node })}
-                    onCopy={(node) => setRowDialog({ kind: 'copy', node })}
-                    onMove={(node) => setRowDialog({ kind: 'move', node })}
-                    onDropFiles={uploadFiles}
-                    sortKey={searchResults ? undefined : sortKey}
-                    sortDir={searchResults ? undefined : sortDir}
-                    onSortChange={searchResults ? undefined : changeSort}
-                    footer={
-                      searchResults ? null : (
-                        <Pager
-                          totalItems={totalItems}
-                          page={page}
-                          pageSize={pageSize}
-                          onPageChange={setPage}
-                          onPageSizeChange={changePageSize}
-                        />
-                      )
-                    }
-                  />
-                </div>
-
-                {detailsNode && !previewOpen && (
-                  <DetailsPanel
-                    key={detailsNode.id}
-                    node={detailsNode}
-                    ownerName={detailsNode.createdByUser ? taskActivity.displayNameOf(detailsNode.createdByUser) : ''}
-                    location={searchResults ? locationLabel(detailsNode) : breadcrumb.map((c) => c.name).join(' / ')}
-                    onOpen={() => setPreviewFull(true)}
-                    onClose={closeDetails}
-                  />
-                )}
-              </div>
-            </section>
+            commandBarFolder
           )}
         </main>
       </div>
+
+      {sidePanel}
 
       {paneNode && (
         <PreviewPane
@@ -777,6 +1060,15 @@ function App() {
           onExpandedChange={setPreviewExpanded}
           onSelect={selectPreview}
           onClose={closePreview}
+        />
+      )}
+
+      {paletteOpen && (
+        <CommandPalette
+          commands={paletteCommands()}
+          initialQuery={searchResults ? searchQuery : ''}
+          onSearch={runSearch}
+          onClose={() => setPaletteOpen(false)}
         />
       )}
 

@@ -4,10 +4,8 @@ import ch.dmspoc.api.dto.FolderNode;
 import ch.dmspoc.api.dto.FolderTemplateDto;
 import ch.dmspoc.api.dto.FolderTemplateRequest;
 import ch.dmspoc.api.exception.AlfrescoApiException;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import tools.jackson.core.type.TypeReference;
-import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 import java.util.ArrayList;
@@ -20,15 +18,13 @@ import java.util.UUID;
 /**
  * Admin-designed folder templates (Client, Property, Owner...). They are kept as one small JSON document,
  * {@code Company Home/zapis-config/folder-templates.json}, so they live in Alfresco next to the content
- * and survive API restarts. Reading and writing that document uses the service account; creating folders
+ * and survive API restarts. Reading and writing that document goes through {@link ConfigStore} (service account); creating folders
  * from a template is done by {@link AlfrescoService} with the member's own ticket.
  */
 @Service
 public class FolderTemplateService {
 
-    private static final String CONFIG_FOLDER = "zapis-config";
     private static final String CONFIG_FILE = "folder-templates.json";
-    private static final String REPOSITORY_ROOT = "-root-";
 
     /**
      * cm:description prefix on the top folder created from a template; members may rename, move and delete
@@ -42,11 +38,11 @@ public class FolderTemplateService {
     private static final TypeReference<List<FolderTemplateDto>> LIST_TYPE = new TypeReference<>() {
     };
 
-    private final AlfrescoClient service;
+    private final ConfigStore store;
     private final ObjectMapper mapper;
 
-    public FolderTemplateService(@Qualifier("serviceAlfrescoClient") AlfrescoClient service, ObjectMapper mapper) {
-        this.service = service;
+    public FolderTemplateService(ConfigStore store, ObjectMapper mapper) {
+        this.store = store;
         this.mapper = mapper;
     }
 
@@ -120,33 +116,10 @@ public class FolderTemplateService {
     }
 
     private List<FolderTemplateDto> read() {
-        String folderId = configFolderId(false);
-        if (folderId == null) return List.of();
-        String fileId = configFileId(folderId);
-        if (fileId == null) return List.of();
-        byte[] content = service.getContent(fileId);
-        if (content == null || content.length == 0) return List.of();
-        return mapper.readValue(content, LIST_TYPE);
+        return store.read(CONFIG_FILE).map(content -> mapper.readValue(content, LIST_TYPE)).orElse(List.of());
     }
 
     private void write(List<FolderTemplateDto> templates) {
-        String folderId = configFolderId(true);
-        service.uploadFile(folderId, CONFIG_FILE, mapper.writeValueAsBytes(templates), "application/json", true);
-    }
-
-    /** The config folder under Company Home; created on first write. */
-    private String configFolderId(boolean create) {
-        for (JsonNode item : service.listChildren(REPOSITORY_ROOT, "(isFolder=true)", 0, 1000).path("list").path("entries")) {
-            if (CONFIG_FOLDER.equals(item.path("entry").path("name").asText())) return item.path("entry").path("id").asText();
-        }
-        if (!create) return null;
-        return service.createFolder(REPOSITORY_ROOT, CONFIG_FOLDER).path("entry").path("id").asText();
-    }
-
-    private String configFileId(String folderId) {
-        for (JsonNode item : service.listChildren(folderId, "(isFile=true)", 0, 100).path("list").path("entries")) {
-            if (CONFIG_FILE.equals(item.path("entry").path("name").asText())) return item.path("entry").path("id").asText();
-        }
-        return null;
+        store.write(CONFIG_FILE, mapper.writeValueAsBytes(templates));
     }
 }

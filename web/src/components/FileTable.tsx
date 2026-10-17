@@ -3,8 +3,8 @@ import type { DragEvent, ReactNode } from 'react'
 import { ArrowDown, ArrowUp, ArrowUpDown, Copy, Download, Eye, FolderInput, FolderOpen, Pencil, SearchX, Trash2, Upload, UploadCloud } from 'lucide-react'
 import type { NodeDto, NodeSortDir, NodeSortKey } from '../api'
 import { downloadNodes } from '../download'
-import { formatBytes, formatDate, initials, isMemberFolder, isStructureFolder, templateOf, typeLabel } from '../formatters'
-import { FileTile } from './FileIcon'
+import { formatBytes, formatDate, initials, isMemberFolder, isStructureFolder, kindFor, templateOf, typeLabel } from '../formatters'
+import { FileIcon, FileTile } from './FileIcon'
 import { EmptyState } from './EmptyState'
 import { ActionsMenu, type MenuAction } from './ActionsMenu'
 
@@ -54,6 +54,11 @@ interface Props {
   onSortChange?: (key: SortKey, dir: SortDir) => void
   /** Rendered directly under the rows (the pager). */
   footer?: ReactNode
+  /**
+   * How a row shows its type (follows the app style): 'tile' is the coloured extension tile with the type under
+   * the name, 'icon' a small line icon with the type in its own column.
+   */
+  variant?: 'tile' | 'icon'
 }
 
 const COLUMNS: { key: SortKey; label: string }[] = [
@@ -93,7 +98,9 @@ export function FileTable({
   sortDir: sortDirProp,
   onSortChange,
   footer,
+  variant = 'tile',
 }: Props) {
+  const iconRows = variant === 'icon'
   const serverSort = onSortChange !== undefined
   const [localKey, setLocalKey] = useState<SortKey>('name')
   const [localDir, setLocalDir] = useState<SortDir>('asc')
@@ -267,7 +274,7 @@ export function FileTable({
                   />
                 )}
               </th>
-              {COLUMNS.map((col) => (
+              {COLUMNS.map((col) => [
                 <th
                   key={col.key}
                   className={`col-${col.key}`}
@@ -285,8 +292,14 @@ export function FileTable({
                       <ArrowUpDown size={13} className="sort-icon-idle" aria-hidden="true" />
                     )}
                   </button>
-                </th>
-              ))}
+                </th>,
+                // The type column sits right after the name; it is not sortable (the API sorts by name, date, owner, size).
+                col.key === 'name' && iconRows && (
+                  <th key="type" className="col-type">
+                    Type
+                  </th>
+                ),
+              ])}
               <th className="col-actions">
                 <span className="sr-only">Actions</span>
               </th>
@@ -305,6 +318,11 @@ export function FileTable({
                       <div className="skeleton skeleton-name" />
                     </div>
                   </td>
+                  {iconRows && (
+                    <td className="col-type">
+                      <div className="skeleton skeleton-text-sm" />
+                    </td>
+                  )}
                   <td>
                     <div className="skeleton skeleton-text" />
                   </td>
@@ -340,7 +358,11 @@ export function FileTable({
                     </td>
                     <td className="col-name">
                       <div className="name-cell">
-                        <FileTile name={node.name} isFolder={node.isFolder} templateInstance={!!template} />
+                        {iconRows ? (
+                          <FileIcon kind={kindFor(node.name, node.isFolder)} size={20} />
+                        ) : (
+                          <FileTile name={node.name} isFolder={node.isFolder} templateInstance={!!template} />
+                        )}
                         <div className="name-stack">
                           <button
                             type="button"
@@ -359,7 +381,7 @@ export function FileTable({
                             >
                               {getLocation(node)}
                             </button>
-                          ) : (
+                          ) : iconRows ? null : (
                             <span className={`name-sub${template ? ' name-sub-template' : ''}`}>
                               {template ?? typeLabel(node.name, node.isFolder)}
                             </span>
@@ -367,6 +389,7 @@ export function FileTable({
                         </div>
                       </div>
                     </td>
+                    {iconRows && <td className="col-type">{template ?? typeLabel(node.name, node.isFolder)}</td>}
                     <td className="col-modifiedAt">{formatDate(node.modifiedAt)}</td>
                     <td className="col-owner">
                       {owner ? (
@@ -392,7 +415,7 @@ export function FileTable({
 
             {!loading && sorted.length === 0 && (
               <tr className="empty-row">
-                <td colSpan={6}>
+                <td colSpan={iconRows ? 7 : 6}>
                   {isSearchView ? (
                     <EmptyState
                       icon={SearchX}

@@ -1,15 +1,17 @@
 import { useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import type { Space } from '../api'
+import { ApplicationAdmin } from './ApplicationAdmin'
 import { FolderTemplatesAdmin } from './FolderTemplatesAdmin'
 import { SpacesAdmin } from './SpacesAdmin'
 import { UsersAdmin } from './UsersAdmin'
 
-type Section = 'spaces' | 'users'
+type Section = 'spaces' | 'users' | 'application'
 
 const SECTIONS: { value: Section; label: string }[] = [
   { value: 'spaces', label: 'Spaces' },
   { value: 'users', label: 'Users' },
+  { value: 'application', label: 'Application' },
 ]
 
 const SECTION_KEY = 'zapis.adminSection'
@@ -23,16 +25,19 @@ function savedSection(): Section {
   }
 }
 
-/** Administration: one sub-view at a time (Spaces, Users) behind tabs; the last tab used is remembered. */
+/** Administration: one sub-view at a time (Spaces, Users, Application) behind tabs; the last tab used is remembered. */
 export function AdministrationPage({
   spaces,
   onSpacesChanged,
   onTemplatesChanged,
+  onAppearanceChanged,
 }: {
   spaces: Space[] | null
   onSpacesChanged: () => void
   /** Folder templates changed: the New menu in the spaces must pick them up. */
   onTemplatesChanged: () => void
+  /** The default layout or the user-choice switch changed: the admin's own layout may change with it. */
+  onAppearanceChanged: () => void
 }) {
   const [section, setSection] = useState<Section>(savedSection)
   const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({})
@@ -58,7 +63,7 @@ export function AdministrationPage({
     <section className="folder" aria-labelledby="admin-heading">
       <div className="page-head">
         <h1 id="admin-heading">Administration</h1>
-        <p>Create spaces and folder templates, choose who belongs to each space, and manage who can sign in.</p>
+        <p>Create spaces and folder templates, choose who belongs to each space, manage who can sign in and set how the app looks.</p>
       </div>
 
       <div className="task-tabs admin-tabs" role="tablist" aria-label="Administration sections">
@@ -89,8 +94,10 @@ export function AdministrationPage({
             <SpacesAdmin spaces={spaces} onChanged={onSpacesChanged} />
             <FolderTemplatesAdmin onChanged={onTemplatesChanged} />
           </>
-        ) : (
+        ) : section === 'users' ? (
           <UsersAdmin />
+        ) : (
+          <ApplicationAdmin onChanged={onAppearanceChanged} />
         )}
       </div>
     </section>
