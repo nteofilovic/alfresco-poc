@@ -71,6 +71,17 @@ Three-layer separation, in call order `controller -> service (AlfrescoService) -
   `POST /api/nodes/{parentId}/from-template` (`AlfrescoService.createFromTemplate`, user ticket): the top
   folder gets `cm:description = zapis-template:<name>` (`TEMPLATE_MARK`, members may rename/move/delete it),
   its subfolders get `STRUCTURE_MARK` (locked for non-admins).
+- **`service/AnnotationStore` + `PdfAnnotationService`** — PDF annotations never modify the original. The
+  browser (pdf.js) produces an annotated PDF; `PdfAnnotationService` validates it against the original (same
+  page count) and adds sticky notes as Text annotations. The result is stored as a sidecar
+  `zapis-config/annotations/<nodeId>.pdf` + `<nodeId>.json` (`baseVersion`, `updatedBy`, `revision`) via
+  `ConfigStore` (service account), so `AlfrescoService` first checks the caller's own read/`update` rights with
+  their ticket. Annotations are shared per document; a save needs the current `baseRevision` (409 otherwise)
+  and re-bases them on the document's current version; `outdated` = the original got a new version since.
+  Endpoints: `GET/PUT/DELETE /api/nodes/{id}/annotations`, `GET .../annotations/content` (preview),
+  `GET /api/nodes/{id}/content?annotations=true` (download with annotations; plain `/content` is the original).
+  A permanent delete removes the sidecar; a trash delete keeps it (restore keeps the node id); copies start
+  without annotations.
 - **`service/AppearanceService`** — app styles (whole-app layouts `three-pane` | `command-bar`), stored in
   `zapis-config/appearance.json`: admin default + `allowUserChoice` (`/api/admin/appearance`), each user's own
   choice by username (`PUT /api/appearance/me`, 403 while locked). `GET /api/appearance` returns the effective
