@@ -28,6 +28,8 @@ interface Props {
   triggerClassName?: string
   /** Content of a text trigger; defaults to `label` plus a chevron. */
   children?: ReactNode
+  /** Called each time the menu opens, e.g. to look up which optional items to offer. */
+  onOpen?: () => void
 }
 
 const ITEM_HEIGHT = 40
@@ -38,7 +40,7 @@ const MENU_WIDTH = 200 // matches .menu min-width
  * The menu is fixed-positioned from the trigger's rect so scrolling containers (the file table card) never clip it,
  * and it opens upwards when there is no room below.
  */
-export function ActionsMenu({ label, disabled, disabledHint, actions, iconOnly = false, icon, triggerClassName, children }: Props) {
+export function ActionsMenu({ label, disabled, disabledHint, actions, iconOnly = false, icon, triggerClassName, children, onOpen }: Props) {
   const [openState, setOpen] = useState(false)
   const [position, setPosition] = useState<CSSProperties>({})
   const [subOpen, setSubOpen] = useState<string | null>(null)
@@ -85,6 +87,7 @@ export function ActionsMenu({ label, disabled, disabledHint, actions, iconOnly =
   function openAt(index: number) {
     place()
     setOpen(true)
+    onOpen?.()
     requestAnimationFrame(() => itemRefs.current[index]?.focus({ preventScroll: true }))
   }
 

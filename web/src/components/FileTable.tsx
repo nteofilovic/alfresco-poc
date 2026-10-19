@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent, ReactNode } from 'react'
-import { ArrowDown, ArrowUp, ArrowUpDown, Copy, Download, Eye, FolderInput, FolderOpen, Pencil, SearchX, Trash2, Upload, UploadCloud } from 'lucide-react'
-import type { NodeDto, NodeSortDir, NodeSortKey } from '../api'
-import { downloadNodes } from '../download'
+import { ArrowDown, ArrowUp, ArrowUpDown, Copy, Download, Eye, FileDown, FolderInput, FolderOpen, Pencil, SearchX, Trash2, Upload, UploadCloud } from 'lucide-react'
+import { api, type NodeDto, type NodeSortDir, type NodeSortKey } from '../api'
+import { downloadNodes, downloadUrl } from '../download'
 import { formatBytes, formatDate, initials, isMemberFolder, isStructureFolder, kindFor, templateOf, typeLabel } from '../formatters'
 import { FileIcon, FileTile } from './FileIcon'
 import { EmptyState } from './EmptyState'
@@ -108,6 +108,7 @@ export function FileTable({
   const sortDir = serverSort ? (sortDirProp ?? 'asc') : localDir
   const [dragActive, setDragActive] = useState(false)
   const dragDepth = useRef(0)
+  const [hasAnnotations, setHasAnnotations] = useState<Record<string, boolean>>({})
 
   function toggleSort(key: SortKey) {
     const dir: SortDir = key === sortKey ? (sortDir === 'asc' ? 'desc' : 'asc') : 'asc'
@@ -143,6 +144,15 @@ export function FileTable({
     return copy
   }, [nodes, serverSort, sortKey, sortDir, ownerNameOf])
 
+  /** The listing already says which PDFs have annotations; re-check one when its menu opens in case that changed since. */
+  function lookUpAnnotations(node: NodeDto) {
+    if (node.mimeType !== 'application/pdf') return
+    api
+      .getAnnotations(node.id)
+      .then((info) => setHasAnnotations((all) => (all[node.id] === info.exists ? all : { ...all, [node.id]: info.exists })))
+      .catch(() => {})
+  }
+
   function rowActions(node: NodeDto): MenuAction[] {
     const actions: MenuAction[] = []
     if (node.isFile) {
@@ -150,6 +160,15 @@ export function FileTable({
         { key: 'details', label: 'Details', icon: <Eye size={15} aria-hidden="true" />, onSelect: () => onPreview(node) },
         { key: 'download', label: 'Download', icon: <Download size={15} aria-hidden="true" />, onSelect: () => downloadNodes([node.id]) },
       )
+      // Only offered once the menu has found that this PDF has annotations (see lookUpAnnotations).
+      if (hasAnnotations[node.id] ?? node.hasAnnotations) {
+        actions.push({
+          key: 'download-annotated',
+          label: 'Download with annotations',
+          icon: <FileDown size={15} aria-hidden="true" />,
+          onSelect: () => downloadUrl(api.annotatedDownloadUrl(node.id)),
+        })
+      }
     }
     if (node.isFile || canManageFolders || isMemberFolder(node)) {
       const structure = isStructureFolder(node)
@@ -406,7 +425,13 @@ export function FileTable({
                     <td className="col-sizeInBytes">{node.isFile ? formatBytes(node.sizeInBytes) : '—'}</td>
                     <td className="col-actions">
                       {actions.length > 0 && (
-                        <ActionsMenu iconOnly label={`More actions for ${node.name}`} disabled={false} actions={actions} />
+                        <ActionsMenu
+                          iconOnly
+                          label={`More actions for ${node.name}`}
+                          disabled={false}
+                          actions={actions}
+                          onOpen={() => lookUpAnnotations(node)}
+                        />
                       )}
                     </td>
                   </tr>

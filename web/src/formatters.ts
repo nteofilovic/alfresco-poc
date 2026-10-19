@@ -42,6 +42,11 @@ export function formatDate(iso: string | null, now = new Date()): string {
   return `${swissDay(d)} ${time}`
 }
 
+/** Full local timestamp as DD.MM.YYYY HH:MM:SS (e.g. 19.10.2026 21:41:33). */
+export function formatDateTimeFull(d: Date): string {
+  return `${pad2(d.getDate())}.${pad2(d.getMonth() + 1)}.${d.getFullYear()} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`
+}
+
 /** Parses a date-only string ("2026-10-15") as a local calendar day, anything else as a timestamp. */
 function parseDay(value: string): Date {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)

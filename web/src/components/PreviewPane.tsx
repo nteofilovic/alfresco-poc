@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react'
 import {
   ChevronDown,
   ChevronUp,
   Download,
+  Eraser,
   FileQuestion,
   Maximize2,
   Minimize2,
@@ -12,11 +13,15 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react'
-import { api, type NodeDto } from '../api'
+import { api, type AnnotationInfo, type NodeDto } from '../api'
 import { formatBytes, formatDate } from '../formatters'
+import { ConfirmDialog } from './ConfirmDialog'
 import { FileTile } from './FileIcon'
 import { Spinner } from './Spinner'
 import { EmptyState } from './EmptyState'
+
+// pdf.js is large; it is only fetched when a PDF is opened.
+const PdfViewer = lazy(() => import('./PdfViewer').then((m) => ({ default: m.PdfViewer })))
 
 interface Props {
   node: NodeDto
@@ -61,6 +66,15 @@ export function PreviewPane({ node, files, ratio, onRatioChange, expanded, onExp
   const [zoom, setZoom] = useState(1)
   const [fit, setFit] = useState<FitMode>('page')
   const paneRef = useRef<HTMLElement>(null)
+  // Bumped after annotations are saved or discarded so the PDF is fetched again.
+  const [reload, setReload] = useState(0)
+  // Annotations live beside the original (never in it); PDFs open with them unless "Original" is picked.
+  const [annotations, setAnnotations] = useState<AnnotationInfo | null>(null)
+  const [showOriginal, setShowOriginal] = useState(false)
+  const [outdatedDismissed, setOutdatedDismissed] = useState(false)
+  const [confirmDiscard, setConfirmDiscard] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const isPdf = node.mimeType === 'application/pdf' && !node.isFolder
 
   const index = files.findIndex((f) => f.id === node.id)
   const prev = index > 0 ? files[index - 1] : null
@@ -70,9 +84,16 @@ export function PreviewPane({ node, files, ratio, onRatioChange, expanded, onExp
     let objectUrl: string | null = null
     let cancelled = false
 
+    async function load() {
+      // Not being able to read annotations must not block the preview itself.
+      const info = isPdf ? await api.getAnnotations(node.id).catch(() => null) : null
+      if (cancelled) return
+      setAnnotations(info)
+      return info?.exists && !showOriginal ? api.fetchAnnotatedPreview(node.id) : api.fetchPreview(node.id)
+    }
+
     // State resets because App keys this component by node id.
-    api
-      .fetchPreview(node.id)
+    load()
       .then((result) => {
         if (cancelled) return
         if (!result) {
@@ -90,7 +111,24 @@ export function PreviewPane({ node, files, ratio, onRatioChange, expanded, onExp
       cancelled = true
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [node.id])
+  }, [node.id, reload, showOriginal, isPdf])
+
+  function toggleOriginal() {
+    setState({ status: 'loading' })
+    setShowOriginal((v) => !v)
+  }
+
+  async function discardAnnotations() {
+    try {
+      await api.deleteAnnotations(node.id)
+      setActionError(null)
+      setShowOriginal(false)
+      setReload((n) => n + 1)
+    } catch (err) {
+      setActionError(String(err))
+    }
+    setConfirmDiscard(false)
+  }
 
   // Non-modal pane: keyboard shortcuts work while the list keeps focus.
   useEffect(() => {
@@ -252,6 +290,28 @@ export function PreviewPane({ node, files, ratio, onRatioChange, expanded, onExp
               </button>
             </div>
           )}
+          {annotations?.exists && (
+            <>
+              <button
+                type="button"
+                className={`preview-fit${showOriginal ? '' : ' active'}`}
+                onClick={toggleOriginal}
+                aria-pressed={!showOriginal}
+                title={showOriginal ? 'Show the document with its annotations' : 'Show the original without annotations'}
+              >
+                Annotations
+              </button>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => setConfirmDiscard(true)}
+                aria-label="Discard annotations"
+                title="Discard annotations"
+              >
+                <Eraser size={17} aria-hidden="true" />
+              </button>
+            </>
+          )}
           <a className="icon-button" href={api.downloadUrl(node.id)} download aria-label="Download" title="Download">
             <Download size={17} aria-hidden="true" />
           </a>
@@ -270,6 +330,26 @@ export function PreviewPane({ node, files, ratio, onRatioChange, expanded, onExp
           </button>
         </div>
       </header>
+
+      {annotations?.exists && annotations.outdated && !outdatedDismissed && (
+        <p className="preview-banner" role="status">
+          <span>
+            These annotations were made on version {annotations.baseVersion}; the document is now at version{' '}
+            {annotations.currentVersion}. Saving again applies them to the current version.
+          </span>
+          <button type="button" className="preview-fit" onClick={() => setConfirmDiscard(true)}>
+            Discard annotations
+          </button>
+          <button type="button" className="preview-fit" onClick={() => setOutdatedDismissed(true)}>
+            Keep
+          </button>
+        </p>
+      )}
+      {actionError && (
+        <p className="preview-banner" role="alert">
+          <span>{actionError}</span>
+        </p>
+      )}
 
       <div className="preview-body" aria-busy={state.status === 'loading'}>
         {state.status === 'loading' && (
@@ -302,9 +382,34 @@ export function PreviewPane({ node, files, ratio, onRatioChange, expanded, onExp
         )}
 
         {state.status === 'ready' && state.contentType === 'application/pdf' && (
-          <iframe className="preview-frame" src={`${state.url}#view=FitH`} title={`Preview of ${node.name}`} />
+          <Suspense fallback={<Spinner size={22} label="Opening PDF…" />}>
+            <PdfViewer
+              key={state.url}
+              url={state.url}
+              nodeId={node.id}
+              // Editing starts from the annotated copy, so the original view is read-only when annotations exist.
+              editable={isPdf && !(showOriginal && annotations?.exists)}
+              baseRevision={annotations?.revision ?? 0}
+              onSaved={(info) => {
+                setAnnotations(info)
+                setOutdatedDismissed(false)
+                setReload((n) => n + 1)
+              }}
+            />
+          </Suspense>
         )}
       </div>
+
+      {confirmDiscard && (
+        <ConfirmDialog
+          title="Discard annotations?"
+          message="The annotations on this document will be removed for everyone. The original file is not affected."
+          confirmLabel="Discard"
+          busyLabel="Discarding…"
+          onConfirm={discardAnnotations}
+          onCancel={() => setConfirmDiscard(false)}
+        />
+      )}
 
       <footer className="preview-footer">
         <span className="preview-position" aria-live="polite">
