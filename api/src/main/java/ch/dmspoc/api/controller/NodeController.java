@@ -1,21 +1,28 @@
 package ch.dmspoc.api.controller;
 
 import ch.dmspoc.api.config.AlfrescoProperties;
+import ch.dmspoc.api.dto.AnnotationInfo;
 import ch.dmspoc.api.dto.CreateFolderRequest;
 import ch.dmspoc.api.dto.NodeDto;
 import ch.dmspoc.api.dto.NodePage;
+import ch.dmspoc.api.dto.StickyNote;
 import ch.dmspoc.api.dto.UpdateMetadataRequest;
+import ch.dmspoc.api.exception.RequestRejectedException;
 import ch.dmspoc.api.service.AlfrescoService;
 import jakarta.servlet.http.HttpSession;
 import jakarta.validation.Valid;
 import org.springframework.core.io.ByteArrayResource;
+import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.function.Supplier;
 
 /**
  * Browsing, upload/download, and metadata for Alfresco nodes (files and folders).
@@ -24,6 +31,9 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/nodes")
 public class NodeController {
+
+    private static final Supplier<RequestRejectedException> NO_ANNOTATIONS =
+            () -> new RequestRejectedException(404, "This document has no annotations.");
 
     private final AlfrescoService alfrescoService;
     private final AlfrescoProperties props;
@@ -120,14 +130,62 @@ public class NodeController {
         return alfrescoService.uploadFile(parentId, file, overwrite);
     }
 
+    /** The original file; with {@code annotations=true} the copy with its annotations (404 when it has none). */
     @GetMapping("/{nodeId}/content")
-    public ResponseEntity<ByteArrayResource> downloadContent(@PathVariable String nodeId) {
+    public ResponseEntity<ByteArrayResource> downloadContent(@PathVariable String nodeId,
+                                                             @RequestParam(defaultValue = "false") boolean annotations) {
+        if (annotations) {
+            byte[] annotated = alfrescoService.getAnnotatedContent(nodeId).orElseThrow(NO_ANNOTATIONS);
+            return ResponseEntity.ok()
+                    .contentType(MediaType.APPLICATION_PDF)
+                    .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()
+                            .filename(alfrescoService.annotatedFileName(nodeId), StandardCharsets.UTF_8).build().toString())
+                    .body(new ByteArrayResource(annotated));
+        }
         NodeDto node = alfrescoService.getNode(nodeId);
         byte[] content = alfrescoService.downloadContent(nodeId);
         return ResponseEntity.ok()
                 .contentType(node.mimeType() != null ? MediaType.parseMediaType(node.mimeType()) : MediaType.APPLICATION_OCTET_STREAM)
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + node.name() + "\"")
                 .body(new ByteArrayResource(content));
+    }
+
+    // ------------------------------------------------------------ annotations (the original is never changed)
+
+    @GetMapping("/{nodeId}/annotations")
+    public AnnotationInfo getAnnotations(@PathVariable String nodeId) {
+        return alfrescoService.getAnnotations(nodeId);
+    }
+
+    /** The annotated copy, inline so the preview can show it. */
+    @GetMapping("/{nodeId}/annotations/content")
+    public ResponseEntity<ByteArrayResource> annotatedContent(@PathVariable String nodeId) {
+        byte[] annotated = alfrescoService.getAnnotatedContent(nodeId).orElseThrow(NO_ANNOTATIONS);
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_PDF)
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline")
+                .body(new ByteArrayResource(annotated));
+    }
+
+    /**
+     * Stores a PDF annotated in the browser as the document's annotated copy. Parts: {@code file} is the PDF,
+     * {@code notes} an optional JSON array of sticky notes to add. {@code baseRevision} is the revision the
+     * client started from, 0 for none (409 if someone saved since).
+     */
+    @PutMapping(value = "/{nodeId}/annotations", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public AnnotationInfo saveAnnotations(@PathVariable String nodeId,
+                                          @RequestParam(defaultValue = "0") long baseRevision,
+                                          @RequestPart("file") MultipartFile file,
+                                          @RequestPart(value = "notes", required = false) List<@Valid StickyNote> notes,
+                                          HttpSession session) throws IOException {
+        String author = session.getAttribute(AuthController.SESSION_USER_ATTR) instanceof String u ? u : null;
+        return alfrescoService.saveAnnotations(nodeId, file.getBytes(), notes, author, baseRevision);
+    }
+
+    @DeleteMapping("/{nodeId}/annotations")
+    public ResponseEntity<Void> deleteAnnotations(@PathVariable String nodeId) {
+        alfrescoService.deleteAnnotations(nodeId);
+        return ResponseEntity.noContent().build();
     }
 
     /**

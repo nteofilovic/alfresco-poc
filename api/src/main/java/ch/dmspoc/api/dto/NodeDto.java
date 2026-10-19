@@ -18,8 +18,14 @@ public record NodeDto(
         String createdByUser,
         List<String> aspectNames,
         Map<String, Object> properties,
-        List<PathElement> ancestors // root-first folder chain; only filled for search hits
+        List<PathElement> ancestors, // root-first folder chain; only filled for search hits
+        boolean hasAnnotations // a PDF with an annotated copy; set on listings so menus can offer it up front
 ) {
+
+    public NodeDto withAnnotations(boolean annotated) {
+        return new NodeDto(id, name, isFolder, isFile, nodeType, mimeType, sizeInBytes, createdAt, modifiedAt,
+                createdByUser, aspectNames, properties, ancestors, annotated);
+    }
 
     public record PathElement(String id, String name) {
     }

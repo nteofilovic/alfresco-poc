@@ -31,6 +31,11 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(resolved).body(errorBody(resolved.value(), e.getMessage()));
     }
 
+    @ExceptionHandler(RequestRejectedException.class)
+    public ResponseEntity<Map<String, Object>> handleRejected(RequestRejectedException e) {
+        return ResponseEntity.status(e.getStatus()).body(errorBody(e.getStatus(), e.getMessage()));
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<Map<String, Object>> handleValidation(MethodArgumentNotValidException e) {
         String detail = e.getBindingResult().getFieldErrors().stream()

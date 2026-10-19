@@ -51,6 +51,16 @@ public class AlfrescoClient {
         return get("/nodes/" + enc(nodeId), mapOf("include", include));
     }
 
+    /** The node at {@code relativePath} below {@code parentId} (a name or a path of names), or null when there is none. */
+    public JsonNode findByRelativePath(String parentId, String relativePath) {
+        try {
+            return get("/nodes/" + enc(parentId), mapOf("relativePath", relativePath)).path("entry");
+        } catch (AlfrescoApiException e) {
+            if (e.getStatus() == 404) return null;
+            throw e;
+        }
+    }
+
     public JsonNode listChildren(String parentId, String where, int skip, int maxItems) {
         return listChildren(parentId, where, skip, maxItems, "isFolder DESC,name ASC");
     }
@@ -98,6 +108,20 @@ public class AlfrescoClient {
                 .retrieve()
                 .onStatus(HttpStatusCode::isError, this::handleError)
                 .body(byte[].class);
+    }
+
+    /** Replaces the content of an existing file; Alfresco keeps the previous content as an earlier version. */
+    public JsonNode updateContent(String nodeId, byte[] content, String contentType, String comment) {
+        return core.put()
+                .uri(uri -> uri.path("/nodes/{id}/content")
+                        .queryParam("majorVersion", "true")
+                        .queryParam("comment", comment)
+                        .build(nodeId))
+                .contentType(MediaType.parseMediaType(contentType))
+                .body(content)
+                .retrieve()
+                .onStatus(HttpStatusCode::isError, this::handleError)
+                .body(JsonNode.class);
     }
 
     public JsonNode moveNode(String nodeId, String targetParentId) {

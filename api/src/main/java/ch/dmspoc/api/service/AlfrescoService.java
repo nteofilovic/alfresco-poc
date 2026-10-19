@@ -1,19 +1,25 @@
 package ch.dmspoc.api.service;
 
+import ch.dmspoc.api.dto.AnnotationInfo;
 import ch.dmspoc.api.dto.FolderNode;
 import ch.dmspoc.api.dto.FolderTemplateDto;
 import ch.dmspoc.api.dto.NodeDto;
 import ch.dmspoc.api.dto.NodePage;
+import ch.dmspoc.api.dto.StickyNote;
 import ch.dmspoc.api.exception.AlfrescoApiException;
+import ch.dmspoc.api.exception.RequestRejectedException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -26,17 +32,24 @@ import java.util.stream.StreamSupport;
 @Service
 public class AlfrescoService {
 
+    private static final Logger log = LoggerFactory.getLogger(AlfrescoService.class);
+
     private final AlfrescoClient client;
     private final ObjectMapper mapper;
     private final DocumentMergeService mergeService;
     private final FolderTemplateService templates;
+    private final PdfAnnotationService pdfAnnotations;
+    private final AnnotationStore annotations;
 
     public AlfrescoService(AlfrescoClient client, ObjectMapper mapper, DocumentMergeService mergeService,
-                           FolderTemplateService templates) {
+                           FolderTemplateService templates, PdfAnnotationService pdfAnnotations,
+                           AnnotationStore annotations) {
         this.client = client;
         this.mapper = mapper;
         this.mergeService = mergeService;
         this.templates = templates;
+        this.pdfAnnotations = pdfAnnotations;
+        this.annotations = annotations;
     }
 
     // --------------------------------------------------------------- browsing
@@ -47,9 +60,9 @@ public class AlfrescoService {
 
     public List<NodeDto> listChildren(String parentId, int skip, int maxItems) {
         JsonNode entries = client.listChildren(parentId, null, skip, maxItems).path("list").path("entries");
-        return StreamSupport.stream(entries.spliterator(), false)
+        return markAnnotated(StreamSupport.stream(entries.spliterator(), false)
                 .map(e -> toNodeDto(e.path("entry")))
-                .toList();
+                .toList());
     }
 
     private static final Map<String, String> SORT_FIELDS = Map.of(
@@ -70,9 +83,9 @@ public class AlfrescoService {
         String orderBy = "isFolder DESC," + field + " " + sortDir.toUpperCase()
                 + ("name".equals(field) ? "" : ",name ASC");
         JsonNode list = client.listChildren(parentId, null, skip, max, orderBy).path("list");
-        List<NodeDto> items = StreamSupport.stream(list.path("entries").spliterator(), false)
+        List<NodeDto> items = markAnnotated(StreamSupport.stream(list.path("entries").spliterator(), false)
                 .map(e -> toNodeDto(e.path("entry")))
-                .toList();
+                .toList());
         JsonNode pg = list.path("pagination");
         return new NodePage(items, pg.path("totalItems").asInt(items.size()), skip, max,
                 pg.path("hasMoreItems").asBoolean(false));
@@ -147,8 +160,92 @@ public class AlfrescoService {
         return client.getContent(nodeId);
     }
 
+    // ------------------------------------------------------------ annotations
+    // The original PDF is never changed: annotated copies live in AnnotationStore. That store runs as the service
+    // account, so each method first asks Alfresco, with the user's ticket, whether the caller may read (or update) the node.
+
+    /** Annotation state for a document the caller can read. */
+    public AnnotationInfo getAnnotations(String nodeId) {
+        JsonNode entry = client.getNode(nodeId, null).path("entry");
+        return annotationInfo(nodeId, versionLabel(entry));
+    }
+
+    /** The annotated copy, empty when the document has none. */
+    public Optional<byte[]> getAnnotatedContent(String nodeId) {
+        client.getNode(nodeId, null);
+        return annotations.pdf(nodeId);
+    }
+
+    /** Name for the "download with annotations" file: {@code report.pdf} becomes {@code report (annotated).pdf}. */
+    public String annotatedFileName(String nodeId) {
+        String name = client.getNode(nodeId, null).path("entry").path("name").asText(nodeId);
+        return name.toLowerCase().endsWith(".pdf") ? name.substring(0, name.length() - 4) + " (annotated).pdf" : name + " (annotated).pdf";
+    }
+
+    /**
+     * Stores the PDF annotated in the browser (plus extra sticky notes) next to, not over, the original.
+     * {@code baseRevision} is the revision the client started from; if someone saved since, the edit is refused.
+     * Saving also re-bases the annotations onto the document's current version.
+     */
+    public AnnotationInfo saveAnnotations(String nodeId, byte[] annotated, List<StickyNote> notes, String author,
+                                          long baseRevision) {
+        JsonNode entry = requireUpdatable(nodeId);
+        if (!"application/pdf".equals(entry.path("content").path("mimeType").asText(null))) {
+            throw new RequestRejectedException(415, "Only PDF files can be annotated.");
+        }
+        long stored = annotations.meta(nodeId).map(AnnotationStore.Meta::revision).orElse(0L);
+        if (baseRevision != stored) {
+            throw new RequestRejectedException(409, "These annotations were changed by someone else. Reload the document before saving yours.");
+        }
+        pdfAnnotations.validate(client.getContent(nodeId), annotated);
+        byte[] result = pdfAnnotations.addNotes(annotated, notes, author);
+        String version = versionLabel(entry);
+        AnnotationStore.Meta meta = new AnnotationStore.Meta(version, author, Instant.now().toString(), stored + 1);
+        annotations.save(nodeId, result, meta);
+        return annotationInfo(meta, version);
+    }
+
+    public void deleteAnnotations(String nodeId) {
+        requireUpdatable(nodeId);
+        annotations.delete(nodeId);
+    }
+
+    private JsonNode requireUpdatable(String nodeId) {
+        JsonNode entry = client.getNode(nodeId, "allowableOperations").path("entry");
+        boolean mayUpdate = false;
+        for (JsonNode op : entry.path("allowableOperations")) mayUpdate |= "update".equals(op.asText());
+        if (!mayUpdate) throw new RequestRejectedException(403, "You do not have permission to annotate this document.");
+        return entry;
+    }
+
+    private static String versionLabel(JsonNode entry) {
+        return entry.path("properties").path("cm:versionLabel").asText(null);
+    }
+
+    private AnnotationInfo annotationInfo(String nodeId, String currentVersion) {
+        return annotations.meta(nodeId)
+                .map(m -> annotationInfo(m, currentVersion))
+                .orElseGet(() -> AnnotationInfo.none(currentVersion));
+    }
+
+    private static AnnotationInfo annotationInfo(AnnotationStore.Meta m, String currentVersion) {
+        boolean outdated = m.baseVersion() != null && currentVersion != null && !m.baseVersion().equals(currentVersion);
+        return new AnnotationInfo(true, outdated, m.baseVersion(), currentVersion, m.revision(), m.updatedBy(), m.updatedAt());
+    }
+
+    /**
+     * A permanent delete also drops the annotated copy; a delete to the trash keeps it, because restoring the
+     * document brings back the same node id.
+     */
     public void deleteNode(String nodeId, boolean permanent) {
         client.deleteNode(nodeId, permanent);
+        if (permanent) {
+            try {
+                annotations.delete(nodeId);
+            } catch (RuntimeException e) {
+                log.warn("Could not remove the annotations of deleted node {}", nodeId, e);
+            }
+        }
     }
 
     public NodeDto updateMetadata(String nodeId, List<String> aspectNames, Map<String, Object> properties) {
@@ -169,16 +266,16 @@ public class AlfrescoService {
 
     public List<NodeDto> search(String term, int maxItems, String siteId) {
         JsonNode entries = client.search(term, maxItems, siteId).path("list").path("entries");
-        return StreamSupport.stream(entries.spliterator(), false)
+        return markAnnotated(StreamSupport.stream(entries.spliterator(), false)
                 .map(e -> toNodeDto(e.path("entry")))
-                .toList();
+                .toList());
     }
 
     public List<NodeDto> recentDocuments(int maxItems) {
         JsonNode entries = client.recentFiles(maxItems).path("list").path("entries");
-        return StreamSupport.stream(entries.spliterator(), false)
+        return markAnnotated(StreamSupport.stream(entries.spliterator(), false)
                 .map(e -> toNodeDto(e.path("entry")))
-                .toList();
+                .toList());
     }
 
     // ---------------------------------------------------------------- preview
@@ -269,6 +366,22 @@ public class AlfrescoService {
 
     // ---------------------------------------------------------------- mapping
 
+    /**
+     * Flags the PDFs of a listing that have annotations (one lookup for the whole list), so the client can offer
+     * "Download with annotations" the moment a menu opens. A failing lookup only costs that flag, not the listing.
+     */
+    private List<NodeDto> markAnnotated(List<NodeDto> nodes) {
+        if (nodes.stream().noneMatch(n -> "application/pdf".equals(n.mimeType()))) return nodes;
+        try {
+            Set<String> annotated = annotations.annotatedIds();
+            if (annotated.isEmpty()) return nodes;
+            return nodes.stream().map(n -> annotated.contains(n.id()) ? n.withAnnotations(true) : n).toList();
+        } catch (RuntimeException e) {
+            log.warn("Could not look up annotations for a listing", e);
+            return nodes;
+        }
+    }
+
     private NodeDto toNodeDto(JsonNode e) {
         List<String> aspects = new ArrayList<>();
         e.path("aspectNames").forEach(a -> aspects.add(a.asText()));
@@ -294,7 +407,8 @@ public class AlfrescoService {
                 e.path("createdByUser").path("displayName").asText(null),
                 aspects,
                 properties,
-                ancestors
+                ancestors,
+                false
         );
     }
 
