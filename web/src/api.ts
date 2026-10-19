@@ -16,6 +16,40 @@ export interface NodeDto {
   properties: Record<string, unknown>
   /** Root-first folder chain (id + name); only populated for search results. */
   ancestors?: { id: string; name: string }[]
+  /** A PDF that has an annotated copy (set on listings and search results). */
+  hasAnnotations?: boolean
+}
+
+/** A sticky note to add to a PDF; x/y are fractions (0..1) of the page from its top-left corner. */
+export interface StickyNote {
+  page: number
+  x: number
+  y: number
+  text: string
+  /** Icon colour as #rrggbb. */
+  color: string
+}
+
+/** State of a PDF's annotations; `revision` is what a save must send back to detect concurrent edits. */
+export interface AnnotationInfo {
+  exists: boolean
+  /** The original got a new version after the annotations were made. */
+  outdated: boolean
+  baseVersion: string | null
+  currentVersion: string | null
+  revision: number
+  updatedBy: string | null
+  updatedAt: string | null
+}
+
+async function fetchBlob(url: string): Promise<{ blob: Blob; contentType: string }> {
+  const res = await fetch(url, { credentials: 'include' })
+  if (!res.ok) {
+    const body = await res.text().catch(() => '')
+    throw new Error(`${res.status} ${res.statusText}: ${body}`)
+  }
+  const blob = await res.blob()
+  return { blob, contentType: res.headers.get('Content-Type') ?? blob.type }
 }
 
 async function handle<T>(res: Response): Promise<T> {
@@ -266,6 +300,33 @@ export const api = {
     }).then((r) => handle<NodeDto>(r)),
 
   downloadUrl: (nodeId: string) => `/api/nodes/${encodeURIComponent(nodeId)}/content`,
+
+  /** The original file is never changed by annotating; this is the copy that carries them (404 when there is none). */
+  annotatedDownloadUrl: (nodeId: string) => `/api/nodes/${encodeURIComponent(nodeId)}/content?annotations=true`,
+
+  getAnnotations: (nodeId: string) =>
+    fetch(`/api/nodes/${encodeURIComponent(nodeId)}/annotations`, { credentials: 'include' }).then((r) =>
+      handle<AnnotationInfo>(r),
+    ),
+
+  /** Stores the annotated PDF next to the original; rejects with 409 when someone saved since `baseRevision`. */
+  saveAnnotations: (nodeId: string, pdf: Uint8Array<ArrayBuffer>, notes: StickyNote[], baseRevision: number) => {
+    const form = new FormData()
+    form.append('file', new Blob([pdf], { type: 'application/pdf' }), 'document.pdf')
+    if (notes.length > 0) form.append('notes', new Blob([JSON.stringify(notes)], { type: 'application/json' }))
+    return fetch(`/api/nodes/${encodeURIComponent(nodeId)}/annotations?baseRevision=${baseRevision}`, {
+      method: 'PUT',
+      credentials: 'include',
+      body: form,
+    }).then((r) => handle<AnnotationInfo>(r))
+  },
+
+  deleteAnnotations: (nodeId: string) =>
+    fetch(`/api/nodes/${encodeURIComponent(nodeId)}/annotations`, { method: 'DELETE', credentials: 'include' }).then((r) =>
+      handle<void>(r),
+    ),
+
+  fetchAnnotatedPreview: (nodeId: string) => fetchBlob(`/api/nodes/${encodeURIComponent(nodeId)}/annotations/content`),
 
   previewUrl: (nodeId: string) => `/api/nodes/${encodeURIComponent(nodeId)}/preview`,
 
