@@ -55,7 +55,8 @@ public class AlfrescoService {
     // --------------------------------------------------------------- browsing
 
     public NodeDto getNode(String nodeId) {
-        return toNodeDto(client.getNode(nodeId, "properties,aspectNames").path("entry"));
+        // "path" gives the folder chain, so a shared link can open the document in its folder.
+        return toNodeDto(client.getNode(nodeId, "properties,aspectNames,path").path("entry"));
     }
 
     public List<NodeDto> listChildren(String parentId, int skip, int maxItems) {

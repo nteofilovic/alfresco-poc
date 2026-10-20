@@ -127,7 +127,9 @@ Small, no router/state-library yet:
   the backend. Add new backend calls here, not ad-hoc `fetch`s in components.
 - **`App.tsx`** — top-level UI: login gate (`LoginForm`), views `home | spaces | tasks | admin | profile`
   (`Sidebar.View`), and inside a space the breadcrumb folder browser, upload, merge-to-PDF selection,
-  split-view preview. Search is global (all spaces the user can read). `HomePage`, `SpacesPage`,
+  split-view preview. The row selection holds whole nodes and survives paging/sorting within a folder (cleared on
+  folder or search change), so Compare works across pages; the toolbar, selection panel and pager show how many
+  selected items are on other pages. Search is global (all spaces the user can read). `HomePage`, `SpacesPage`,
   `TasksPage` (one list of all the user's tasks, space chip + filter), `AdministrationPage`
   (tabs Spaces | Users | Application; Spaces tab = `SpacesAdmin` + `FolderTemplatesAdmin`, Users tab =
   `UsersAdmin`, Application tab = `ApplicationAdmin`) and `ProfilePage` (details, Appearance, password) live in
