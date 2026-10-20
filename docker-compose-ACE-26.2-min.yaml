@@ -1,12 +1,14 @@
 # Minimal Alfresco Community 26.2 stack for the Zapis POC (React -> Spring Boot API -> Alfresco REST).
-# Same image tags as docker-compose-ACE-26.2.yaml, but without Share, Content App, Control Center,
-# Kibana and the Traefik proxy: Zapis only needs the repository REST APIs, search and transforms.
-# Needs ~6GB RAM. Start with: docker compose -f docker-compose-ACE-26.2-min.yaml up -d
+# Same image tags as docker-compose-ACE-26.2.yaml, but without Content App, Control Center,
+# Kibana and the Traefik proxy: Zapis needs the repository REST APIs, search and transforms;
+# Share is kept so the admin can manage sites, users and content directly.
+# Needs ~7GB RAM. Start with: docker compose -f docker-compose-ACE-26.2-min.yaml up -d
 # Uses the same host ports as the other stacks, so run only one stack at a time.
 # Uses its own volumes (*-26-2-min), so it starts with an empty repository.
 #
 # Published ports:
 #   8080  Alfresco REST API  http://localhost:8080/alfresco/api/-default-/public/alfresco/versions/1
+#   8180  Alfresco Share     http://localhost:8180/share  (admin / admin)
 #   8161  ActiveMQ console   (debug only, admin / admin)
 #   9200  Elasticsearch      (debug only)
 # Everything else talks over the internal compose network only.
@@ -114,7 +116,7 @@ services:
         -Dsolr.secureComms=secret
         -Dsolr.sharedSecret=alfresco-poc-shared-secret
         -Dshare.host=localhost
-        -Dshare.port=8080
+        -Dshare.port=8180
         -Dalfresco.host=localhost
         -Dalfresco.port=8080
         -Dcsrf.filter.enabled=false
@@ -168,6 +170,32 @@ services:
       alfresco:
         condition: service_healthy
       transform-core-aio:
+        condition: service_healthy
+
+  share:
+    image: alfresco/alfresco-share:26.2.0
+    mem_limit: 1g
+    environment:
+      REPO_HOST: alfresco
+      REPO_PORT: "8080"
+      # Share is published directly on 8180 (no proxy), so CSRF must accept that origin.
+      CSRF_FILTER_ORIGIN: http://localhost:8180
+      CSRF_FILTER_REFERER: http://localhost:8180/.*
+      ALFRESCO_HOST: localhost
+      ALFRESCO_PORT: "8080"
+      ALFRESCO_CONTEXT: alfresco
+      ALFRESCO_PROTOCOL: http
+      JAVA_OPTS: "-XX:MinRAMPercentage=50 -XX:MaxRAMPercentage=80"
+    ports:
+      - "8180:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/share"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      alfresco:
         condition: service_healthy
 
 volumes:
