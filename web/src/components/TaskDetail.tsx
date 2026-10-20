@@ -17,17 +17,24 @@ interface Props {
   onOpenAttachment: (attachment: TaskAttachment) => void
 }
 
-/** The assignee's message is one running text; new input is appended below what is already there. */
-function composeMessage(existing: string, addition: string): string {
-  const text = addition.trim()
+/** `DD.MM.YYYY HH:MM:SS` in local time. */
+function timestamp(date = new Date()): string {
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${p(date.getDate())}.${p(date.getMonth() + 1)}.${date.getFullYear()} ${p(date.getHours())}:${p(date.getMinutes())}:${p(date.getSeconds())}`
+}
+
+/** The assignee's message is one running text; new input is appended below what is already there, prefixed with the time it was added. */
+function composeMessage(existing: string, addition: string, label = ''): string {
+  const text = `[${timestamp()}] ${label}${addition.trim()}`
   return existing.trim() ? `${existing.trimEnd()}\n\n${text}` : text
 }
 
 export function TaskDetail({ task, username, nameOf, activeAttachmentId, onBack, onUpdated, onOpenAttachment }: Props) {
   const [status, setStatus] = useState<TaskStatus>(task.status)
   const [addition, setAddition] = useState('')
+  const [reason, setReason] = useState('')
   const [saving, setSaving] = useState(false)
-  const [confirming, setConfirming] = useState(false)
+  const [confirming, setConfirming] = useState<'resolve' | 'cancel' | null>(null)
   const [resolving, setResolving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -39,6 +46,11 @@ export function TaskDetail({ task, username, nameOf, activeAttachmentId, onBack,
   async function save(e: FormEvent) {
     e.preventDefault()
     if (!dirty) return
+    // Cancelling closes the task, so it goes through the same confirmation as Resolve.
+    if (status === 'cancelled') {
+      setConfirming('cancel')
+      return
+    }
     setSaving(true)
     setError(null)
     try {
@@ -60,13 +72,18 @@ export function TaskDetail({ task, username, nameOf, activeAttachmentId, onBack,
     setResolving(true)
     setError(null)
     try {
-      const updated = await api.resolveTask(task.id, hasAddition ? composeMessage(task.message, addition) : undefined)
+      const cancelling = confirming === 'cancel'
+      let message: string | undefined
+      if (hasAddition) message = composeMessage(task.message, addition)
+      if (cancelling) message = composeMessage(message ?? task.message, reason, 'Cancelation information: ')
+      const updated = await api.resolveTask(task.id, message, cancelling)
       setAddition('')
-      setConfirming(false)
+      setReason('')
+      setConfirming(null)
       onUpdated(updated)
     } catch (err) {
       setError(apiErrorMessage(err))
-      setConfirming(false)
+      setConfirming(null)
     } finally {
       setResolving(false)
     }
@@ -177,7 +194,7 @@ export function TaskDetail({ task, username, nameOf, activeAttachmentId, onBack,
             <button type="submit" className="btn btn-primary" disabled={!dirty || saving}>
               {saving ? 'Saving…' : 'Save'}
             </button>
-            <button type="button" className="btn btn-secondary" onClick={() => setConfirming(true)} disabled={saving}>
+            <button type="button" className="btn btn-secondary" onClick={() => setConfirming('resolve')} disabled={saving}>
               <CheckCircle2 size={15} aria-hidden="true" />
               Resolve
             </button>
@@ -186,7 +203,9 @@ export function TaskDetail({ task, username, nameOf, activeAttachmentId, onBack,
       ) : (
         <p className="task-readonly">
           {task.resolved
-            ? 'This task has been resolved.'
+            ? task.status === 'cancelled'
+              ? 'This task has been cancelled.'
+              : 'This task has been resolved.'
             : task.assignee === username
               ? ''
               : `Only ${nameOf(task.assignee)} can update this task.`}
@@ -195,17 +214,27 @@ export function TaskDetail({ task, username, nameOf, activeAttachmentId, onBack,
 
       {confirming && (
         <DialogShell
-          title="Resolve this task?"
-          confirmLabel="Resolve task"
-          busyLabel="Resolving…"
+          title={confirming === 'cancel' ? 'Cancel this task?' : 'Resolve this task?'}
+          confirmLabel={confirming === 'cancel' ? 'Cancel task' : 'Resolve task'}
+          busyLabel={confirming === 'cancel' ? 'Cancelling…' : 'Resolving…'}
           busy={resolving}
+          confirmDisabled={confirming === 'cancel' && !reason.trim()}
           onConfirm={resolve}
-          onCancel={() => setConfirming(false)}
+          onCancel={() => {
+            setConfirming(null)
+            setReason('')
+          }}
         >
           <p>
-            “{task.title}” will be marked as done and {nameOf(task.creator)} will be notified.
+            “{task.title}” will be marked as {confirming === 'cancel' ? 'cancelled' : 'done'} and {nameOf(task.creator)} will be notified.
             {hasAddition && ' Your message will be included.'} You won’t be able to edit it afterwards.
           </p>
+          {confirming === 'cancel' && (
+            <label className="dialog-field">
+              Reason for cancelling (required)
+              <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3} disabled={resolving} autoFocus />
+            </label>
+          )}
         </DialogShell>
       )}
     </article>

@@ -4,7 +4,7 @@ import java.util.List;
 
 /**
  * A daily task as the front end sees it. {@code id} is the id of the underlying Alfresco workflow
- * process (stable for the whole life of the task); {@code status} is new, in_progress, on_hold or done.
+ * process (stable for the whole life of the task); {@code status} is new, in_progress, on_hold, cancelled or done.
  * {@code siteId}/{@code siteTitle} name the space the task belongs to (null when unknown).
  */
 public record TaskDto(

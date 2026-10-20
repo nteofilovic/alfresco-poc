@@ -48,6 +48,8 @@ public class TaskService {
     private static final String VAR_DESCRIPTION = "zapisDescription";
     private static final String VAR_MESSAGE = "zapisMessage";
     private static final String VAR_SITE = "zapisSiteId";
+    /** Set to "true" when the assignee closed the task as cancelled instead of done. */
+    private static final String VAR_CANCELLED = "zapisCancelled";
 
     private static final Map<String, String> STATUS_TO_ALFRESCO = Map.of(
             "new", "Not Yet Started",
@@ -160,11 +162,13 @@ public class TaskService {
     }
 
     public TaskDto update(String id, String user, String status, String message) {
+        // Cancelling closes the task, exactly like resolving it.
+        if ("cancelled".equals(status)) return resolve(id, user, message, true);
         String taskId = workItemId(id, user);
         if (status != null) {
             String alfrescoStatus = STATUS_TO_ALFRESCO.get(status);
             if (alfrescoStatus == null) {
-                throw new AlfrescoApiException(400, "status must be one of new, in_progress, on_hold (use resolve to finish a task)");
+                throw new AlfrescoApiException(400, "status must be one of new, in_progress, on_hold, cancelled (use resolve to finish a task)");
             }
             client.setTaskVariable(taskId, "bpm_status", "d:text", alfrescoStatus, "local");
         }
@@ -172,9 +176,13 @@ public class TaskService {
         return load(id);
     }
 
-    public TaskDto resolve(String id, String user, String message) {
+    public TaskDto resolve(String id, String user, String message, boolean cancelled) {
+        if (cancelled && (message == null || message.isBlank())) {
+            throw new AlfrescoApiException(400, "A reason is required to cancel a task");
+        }
         String taskId = workItemId(id, user);
         if (message != null) client.setProcessVariable(id, VAR_MESSAGE, "d:text", message.trim());
+        if (cancelled) client.setProcessVariable(id, VAR_CANCELLED, "d:text", "true");
         client.setTaskVariable(taskId, "bpm_status", "d:text", "Completed", "local");
         client.setTaskState(taskId, "completed");
         return load(id);
@@ -248,7 +256,8 @@ public class TaskService {
         if (creator == null) return null;
 
         boolean done = "completed".equals(task.path("state").asText());
-        String status = done ? "done" : statusOf(task.path("id").asText());
+        String status = !done ? statusOf(task.path("id").asText())
+                : "true".equals(text(vars, VAR_CANCELLED)) ? "cancelled" : "done";
         List<TaskDto.Attachment> attachments = new ArrayList<>();
         for (JsonNode item : client.listProcessItems(processId).path("list").path("entries")) {
             String itemId = item.path("entry").path("id").asText();
@@ -280,8 +289,7 @@ public class TaskService {
             if ("bpm_status".equals(v.path("entry").path("name").asText())) {
                 return switch (v.path("entry").path("value").asText()) {
                     case "In Progress" -> "in_progress";
-                    case "On Hold" -> "on_hold";
-                    case "Completed" -> "done";
+                    case "On Hold" -> "on_hold";                    case "Completed" -> "done";
                     default -> "new";
                 };
             }

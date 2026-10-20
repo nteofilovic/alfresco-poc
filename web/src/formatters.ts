@@ -4,6 +4,7 @@ export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
   new: 'New',
   in_progress: 'In progress',
   on_hold: 'On hold',
+  cancelled: 'Cancelled',
   done: 'Done',
 }
 

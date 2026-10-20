@@ -72,7 +72,8 @@ public class TaskController {
 
     @PostMapping("/{id}/resolve")
     public TaskDto resolve(@PathVariable String id, @RequestBody(required = false) ResolveTaskRequest request, HttpSession session) {
-        return tasks.resolve(id, currentUser(session), request == null ? null : request.message());
+        return tasks.resolve(id, currentUser(session), request == null ? null : request.message(),
+                request != null && Boolean.TRUE.equals(request.cancelled()));
     }
 
     private static String currentUser(HttpSession session) {

@@ -3162,6 +3162,13 @@ textarea {
 
 .task-notice-time {
   color: var(--muted);
+.task-chip-cancelled {
+  background: var(--fog);
+  border-color: var(--rule, transparent);
+  color: var(--ink-soft);
+  text-decoration: line-through;
+}
+
   font-size: 12px;
 }
 
