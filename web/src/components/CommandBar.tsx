@@ -13,6 +13,8 @@ interface Props {
   onNewFolder: () => void
   onNewFromTemplate: (templateId: string) => void
   selectedCount: number
+  /** How many selected items are not on the page being shown. */
+  selectedElsewhere: number
   actions: SelectionActions
   onClearSelection: () => void
 }
@@ -30,6 +32,7 @@ export function CommandBar({
   onNewFolder,
   onNewFromTemplate,
   selectedCount,
+  selectedElsewhere,
   actions,
   onClearSelection,
 }: Props) {
@@ -92,7 +95,7 @@ export function CommandBar({
 
       {selectedCount > 0 && (
         <span className="cmd-count" aria-live="polite">
-          {selectedCount} selected
+          {selectedCount} selected{selectedElsewhere > 0 ? ` (${selectedElsewhere} on other pages)` : ''}
           <button type="button" className="cmd-count-clear" onClick={onClearSelection} aria-label="Clear selection" title="Clear selection">
             <X size={15} strokeWidth={2} aria-hidden="true" />
           </button>

@@ -526,7 +526,7 @@ public class AlfrescoClient {
     private void handleError(org.springframework.http.HttpRequest req,
                               org.springframework.http.client.ClientHttpResponse resp) throws java.io.IOException {
         String body = new String(resp.getBody().readAllBytes());
-        log.warn("Alfresco API error {}: {}", resp.getStatusCode().value(), body);
+        log.warn("Alfresco API error {} on {} {}: {}", resp.getStatusCode().value(), req.getMethod(), req.getURI(), body);
         throw new AlfrescoApiException(resp.getStatusCode().value(), body);
     }
 

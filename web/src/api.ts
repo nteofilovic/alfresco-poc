@@ -159,7 +159,7 @@ export interface Appearance {
 
 export type AppearanceSettings = Pick<Appearance, 'defaultStyle' | 'allowUserChoice'>
 
-export type TaskStatus = 'new' | 'in_progress' | 'on_hold' | 'done'
+export type TaskStatus = 'new' | 'in_progress' | 'on_hold' | 'cancelled' | 'done'
 export type TaskScope = 'assigned' | 'created'
 
 export interface TaskAttachment {
@@ -490,8 +490,8 @@ export const api = {
       .then((r) => handle<TaskDto>(r))
       .then(normalizeTask),
 
-  resolveTask: (id: string, message?: string) =>
-    fetch(`/api/tasks/${encodeURIComponent(id)}/resolve`, jsonInit('POST', { message }))
+  resolveTask: (id: string, message?: string, cancelled?: boolean) =>
+    fetch(`/api/tasks/${encodeURIComponent(id)}/resolve`, jsonInit('POST', { message, cancelled }))
       .then((r) => handle<TaskDto>(r))
       .then(normalizeTask),
 

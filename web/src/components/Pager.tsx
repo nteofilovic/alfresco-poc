@@ -8,12 +8,14 @@ interface Props {
   /** Zero-based page index. */
   page: number
   pageSize: number
+  /** Selected items that are not on this page; shown so the user knows the selection followed them here. */
+  selectedElsewhere?: number
   onPageChange: (page: number) => void
   onPageSizeChange: (size: number) => void
 }
 
 /** Range, rows-per-page and first/previous/next/last controls under the file list. Hidden for a single short page. */
-export function Pager({ totalItems, page, pageSize, onPageChange, onPageSizeChange }: Props) {
+export function Pager({ totalItems, page, pageSize, selectedElsewhere = 0, onPageChange, onPageSizeChange }: Props) {
   const selectId = useId()
   if (totalItems <= PAGE_SIZES[0]) return null
 
@@ -29,6 +31,11 @@ export function Pager({ totalItems, page, pageSize, onPageChange, onPageSizeChan
       <p className="pager-range" aria-live="polite" aria-atomic="true">
         {first}–{last} of {totalItems}
       </p>
+      {selectedElsewhere > 0 && (
+        <p className="pager-selected" aria-live="polite">
+          {selectedElsewhere} selected on {selectedElsewhere === 1 ? 'another page' : 'other pages'}
+        </p>
+      )}
 
       <div className="pager-size">
         <label htmlFor={selectId}>

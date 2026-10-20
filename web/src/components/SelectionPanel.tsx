@@ -3,11 +3,16 @@ import type { NodeDto, Space } from '../api'
 import { extensionBadge, formatBytes } from '../formatters'
 import { roleLabel } from '../spaceRoles'
 import type { SelectionActions } from '../selectionActions'
+import type { MenuAction } from './ActionsMenu'
 import { SpaceMark } from './SpaceMark'
 
 interface Props {
   selected: NodeDto[]
+  /** How many of them are not on the page being shown. */
+  elsewhere: number
   actions: SelectionActions
+  /** Set when exactly one row is selected: the same actions as that row's 3-dots menu, shown instead of the bulk list. */
+  rowMenu?: MenuAction[]
   onClear: () => void
 }
 
@@ -21,9 +26,9 @@ const ROTATIONS = [-5, 4, -1]
 
 /**
  * Three-pane layout: the right-hand panel while rows are selected. A stack of the selected pages, what is
- * selected, Merge as the main action and the other selection actions as a list.
+ * selected and the selection actions as a list (Merge to PDF only while several are selected).
  */
-export function SelectionPanel({ selected, actions, onClear }: Props) {
+export function SelectionPanel({ selected, elsewhere, actions, rowMenu, onClear }: Props) {
   const count = selected.length
   const allFiles = selected.every((n) => n.isFile)
   const totalBytes = selected.reduce((sum, n) => sum + (n.isFile ? (n.sizeInBytes ?? 0) : 0), 0)
@@ -31,6 +36,7 @@ export function SelectionPanel({ selected, actions, onClear }: Props) {
   const pages = selected.slice(0, 3)
   const list: { key: keyof SelectionActions; label: string; icon: typeof Copy; danger?: boolean }[] = [
     { key: 'download', label: 'Download', icon: Download },
+    { key: 'merge', label: 'Merge to PDF', icon: FileStack },
     { key: 'compare', label: 'Compare side by side', icon: Columns2 },
     { key: 'copy', label: 'Copy to…', icon: Copy },
     { key: 'move', label: 'Move to…', icon: FolderInput },
@@ -59,45 +65,56 @@ export function SelectionPanel({ selected, actions, onClear }: Props) {
         {count} {noun}
         {count === 1 ? '' : 's'} selected
       </h2>
+      {elsewhere > 0 && (
+        <p className="selection-panel-meta selection-elsewhere">
+          {elsewhere} on {elsewhere === 1 ? 'another page' : 'other pages'}. The selection is kept while you change page.
+        </p>
+      )}
       <p className="selection-panel-meta">
         {names(selected)}
         {totalBytes > 0 && count > 1 ? `, ${formatBytes(totalBytes)} in total` : ''}
       </p>
 
-      <button
-        type="button"
-        className="btn btn-primary btn-lg selection-panel-merge"
-        disabled={!actions.merge.available}
-        onClick={actions.merge.run}
-      >
-        <FileStack size={17} strokeWidth={1.8} aria-hidden="true" />
-        Merge into one PDF
-      </button>
-      <p className="selection-panel-hint">
-        {actions.merge.available ? 'Files are combined in the order shown in the list.' : actions.merge.hint}
-      </p>
-
-      <ul className="selection-panel-list">
-        {list
-          .filter(({ key }) => key !== 'compare' || actions.compare.available)
-          .map(({ key, label, icon: Icon, danger }) => {
-            const action = actions[key]
-            return (
-              <li key={key}>
-                <button
-                  type="button"
-                  className={`selection-panel-action${danger ? ' danger' : ''}`}
-                  disabled={!action.available}
-                  title={action.available ? undefined : action.hint}
-                  onClick={action.run}
-                >
-                  <Icon size={17} strokeWidth={1.8} aria-hidden="true" />
-                  {label}
-                </button>
-              </li>
-            )
-          })}
-      </ul>
+      {rowMenu ? (
+        <ul className="selection-panel-list">
+          {rowMenu.map((item) => (
+            <li key={item.key}>
+              <button
+                type="button"
+                className={`selection-panel-action${item.danger ? ' danger' : ''}`}
+                disabled={item.disabled}
+                title={item.disabled ? item.hint : undefined}
+                onClick={item.onSelect}
+              >
+                {item.icon}
+                {item.label}
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <ul className="selection-panel-list">
+          {list
+            .filter(({ key }) => (key !== 'compare' || actions.compare.available) && (key !== 'merge' || count > 1))
+            .map(({ key, label, icon: Icon, danger }) => {
+              const action = actions[key]
+              return (
+                <li key={key}>
+                  <button
+                    type="button"
+                    className={`selection-panel-action${danger ? ' danger' : ''}`}
+                    disabled={!action.available}
+                    title={action.available ? undefined : action.hint}
+                    onClick={action.run}
+                  >
+                    <Icon size={17} strokeWidth={1.8} aria-hidden="true" />
+                    {label}
+                  </button>
+                </li>
+              )
+            })}
+        </ul>
+      )}
 
       <button type="button" className="selection-panel-clear" onClick={onClear}>
         Clear selection

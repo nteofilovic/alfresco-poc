@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent, ReactNode } from 'react'
-import { ArrowDown, ArrowUp, ArrowUpDown, Copy, Download, Eye, FileDown, FolderInput, FolderOpen, Pencil, SearchX, Trash2, Upload, UploadCloud } from 'lucide-react'
+import { ArrowDown, ArrowUp, ArrowUpDown, FolderOpen, SearchX, Upload, UploadCloud } from 'lucide-react'
 import { api, type NodeDto, type NodeSortDir, type NodeSortKey } from '../api'
-import { downloadNodes, downloadUrl } from '../download'
-import { formatBytes, formatDate, initials, isMemberFolder, isStructureFolder, kindFor, templateOf, typeLabel } from '../formatters'
+import { rowActions as buildRowActions } from '../rowActions'
+import { formatBytes, formatDate, initials, kindFor, templateOf, typeLabel } from '../formatters'
 import { FileIcon, FileTile } from './FileIcon'
 import { EmptyState } from './EmptyState'
-import { ActionsMenu, type MenuAction } from './ActionsMenu'
+import { ActionsMenu } from './ActionsMenu'
 
 type SortKey = NodeSortKey
 type SortDir = NodeSortDir
@@ -29,6 +29,8 @@ interface Props {
   onOpenLocation: (node: NodeDto) => void
   /** Shows the file's details panel. */
   onPreview: (node: NodeDto) => void
+  /** Copies the link to the file. */
+  onShare: (node: NodeDto) => void
   activeId: string | null
   /** Reports the listed files in display (sorted) order, for previous/next navigation. */
   onFilesOrdered: (files: NodeDto[]) => void
@@ -82,6 +84,7 @@ export function FileTable({
   getLocation,
   onOpenLocation,
   onPreview,
+  onShare,
   activeId,
   onFilesOrdered,
   ownerNameOf,
@@ -153,64 +156,19 @@ export function FileTable({
       .catch(() => {})
   }
 
-  function rowActions(node: NodeDto): MenuAction[] {
-    const actions: MenuAction[] = []
-    if (node.isFile) {
-      actions.push(
-        { key: 'details', label: 'Details', icon: <Eye size={15} aria-hidden="true" />, onSelect: () => onPreview(node) },
-        { key: 'download', label: 'Download', icon: <Download size={15} aria-hidden="true" />, onSelect: () => downloadNodes([node.id]) },
-      )
-      // Only offered once the menu has found that this PDF has annotations (see lookUpAnnotations).
-      if (hasAnnotations[node.id] ?? node.hasAnnotations) {
-        actions.push({
-          key: 'download-annotated',
-          label: 'Download with annotations',
-          icon: <FileDown size={15} aria-hidden="true" />,
-          onSelect: () => downloadUrl(api.annotatedDownloadUrl(node.id)),
-        })
-      }
-    }
-    if (node.isFile || canManageFolders || isMemberFolder(node)) {
-      const structure = isStructureFolder(node)
-      actions.push({
-        key: 'rename',
-        label: 'Rename',
-        icon: <Pencil size={15} aria-hidden="true" />,
-        disabled: structure,
-        hint: 'Part of the workspace structure',
-        onSelect: () => onRename(node),
-      })
-      // Copy/Move pick a destination relative to the browsed folder, so they're unavailable in search results.
-      actions.push(
-        {
-          key: 'copy',
-          label: 'Copy to…',
-          icon: <Copy size={15} aria-hidden="true" />,
-          disabled: isSearchView,
-          hint: 'Open the containing folder to copy',
-          onSelect: () => onCopy(node),
-        },
-        {
-          key: 'move',
-          label: 'Move to…',
-          icon: <FolderInput size={15} aria-hidden="true" />,
-          disabled: isSearchView,
-          hint: 'Open the containing folder to move',
-          onSelect: () => onMove(node),
-        },
-      )
-    }
-    if (node.isFile || canDeleteFolders || isMemberFolder(node)) {
-      actions.push({
-        key: 'delete',
-        label: 'Delete',
-        icon: <Trash2 size={15} aria-hidden="true" />,
-        danger: true,
-        onSelect: () => onDelete(node),
-      })
-    }
-    return actions
-  }
+  const rowActions = (node: NodeDto) =>
+    buildRowActions(node, {
+      isSearchView,
+      canManageFolders,
+      canDeleteFolders,
+      hasAnnotations: hasAnnotations[node.id],
+      onPreview,
+      onShare,
+      onRename,
+      onCopy,
+      onMove,
+      onDelete,
+    })
 
   const selectable = useMemo(() => sorted.filter((n) => n.isFile || canSelectFolders), [sorted, canSelectFolders])
   const selectedCount = selectable.filter((n) => selected.has(n.id)).length

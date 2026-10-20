@@ -10,6 +10,8 @@ interface Props {
   ownerName: string
   location: string
   onOpen: () => void
+  /** Copies the link to the document (the app shows the confirmation). */
+  onShare: () => void
   onClose: () => void
 }
 
@@ -17,9 +19,8 @@ type Thumb = { status: 'loading' } | { status: 'none' } | { status: 'ready'; url
 
 /** Right-side details for the selected file: thumbnail, Open/Download/Share and key metadata. Keyed by node id.
  *  Only image renditions are shown as a real thumbnail; the full preview (Open) shows documents. */
-export function DetailsPanel({ node, ownerName, location, onOpen, onClose }: Props) {
+export function DetailsPanel({ node, ownerName, location, onOpen, onShare, onClose }: Props) {
   const [thumb, setThumb] = useState<Thumb>({ status: 'loading' })
-  const [copied, setCopied] = useState(false)
 
   useEffect(() => {
     let objectUrl: string | null = null
@@ -38,16 +39,6 @@ export function DetailsPanel({ node, ownerName, location, onOpen, onClose }: Pro
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
   }, [node.id])
-
-  async function share() {
-    try {
-      await navigator.clipboard.writeText(new URL(api.downloadUrl(node.id), window.location.href).href)
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 2000)
-    } catch {
-      // Clipboard blocked (e.g. insecure context): nothing useful to show beyond the unchanged label.
-    }
-  }
 
   const description = node.properties?.['cm:description']
   const title = node.properties?.['cm:title']
@@ -93,8 +84,8 @@ export function DetailsPanel({ node, ownerName, location, onOpen, onClose }: Pro
         <a className="btn btn-secondary" href={api.downloadUrl(node.id)} download>
           Download
         </a>
-        <button type="button" className="btn btn-secondary" onClick={share} title="Copy a download link">
-          <span aria-live="polite">{copied ? 'Link copied' : 'Share'}</span>
+        <button type="button" className="btn btn-secondary" onClick={onShare} title="Copy a link to this document">
+          Share
         </button>
       </div>
 

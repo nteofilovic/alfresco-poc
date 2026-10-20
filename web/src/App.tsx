@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent, CSSProperties, FormEvent } from 'react'
 import { api, type Appearance, type AppStyle, type AuthUser, type FolderTemplate, type NodeDto, type NodeSortDir, type NodeSortKey, type Space } from './api'
 import { LoginForm } from './LoginForm'
@@ -8,6 +8,7 @@ import { Topbar } from './components/Topbar'
 import { TopHeader } from './components/TopHeader'
 import { CommandBar } from './components/CommandBar'
 import { FolderTree } from './components/FolderTree'
+import { rowActions, shareUrl } from './rowActions'
 import { SelectionPanel, SpaceInfoPanel } from './components/SelectionPanel'
 import { SpaceMembers } from './components/SpaceMembers'
 import { Trail, type TrailItem } from './components/Trail'
@@ -99,7 +100,10 @@ function App() {
   const [creatingFolder, setCreatingFolder] = useState(false)
   const [comparing, setComparing] = useState(false)
   const [nodes, setNodes] = useState<NodeDto[]>([])
-  const [selected, setSelected] = useState<Set<string>>(new Set())
+  // The selection keeps whole nodes, not ids, so items picked on another page stay usable (compare, download...).
+  const [selection, setSelection] = useState<Map<string, NodeDto>>(new Map())
+  const [selectionScope, setSelectionScope] = useState('')
+  const selected = useMemo(() => new Set(selection.keys()), [selection])
   // Server-side paging of the browsed folder (page is zero-based).
   const [pageSize, setPageSize] = useState(savedPageSize)
   const [page, setPage] = useState(0)
@@ -130,6 +134,16 @@ function App() {
     searchResults: NodeDto[] | null
   } | null>(null)
   const [previewFull, setPreviewFull] = useState(false)
+  // A short confirmation ("Link copied"); clears itself.
+  const [notice, setNotice] = useState<string | null>(null)
+  useEffect(() => {
+    if (!notice) return
+    const t = window.setTimeout(() => setNotice(null), 3000)
+    return () => window.clearTimeout(t)
+  }, [notice])
+  // Document id from a shared link; read once, handled when the user is signed in.
+  const [linkedNodeId] = useState(() => new URLSearchParams(window.location.search).get('node'))
+  const linkHandled = useRef(false)
   // A document opened from a task or the "Recently opened" card; it takes over the preview pane until closed
   // or the user leaves the view it was opened from.
   const [docPreview, setDocPreview] = useState<{ node: NodeDto; view: View } | null>(null)
@@ -180,6 +194,13 @@ function App() {
     setTotalItems(0)
   }
 
+  // The selection survives paging and sorting but belongs to one folder (or to the search results).
+  const selectionScopeNow = searchResults ? 'search' : currentFolder.id
+  if (selectionScope !== selectionScopeNow) {
+    setSelectionScope(selectionScopeNow)
+    setSelection(new Map())
+  }
+
   useEffect(() => {
     pagingRef.current = { page, pageSize, sortKey, sortDir }
   }, [page, pageSize, sortKey, sortDir])
@@ -204,7 +225,12 @@ function App() {
       }
       setNodes(result.items)
       setTotalItems(result.totalItems)
-      setSelected(new Set())
+      // Keep the selection, but show what the server returned now (renames, new versions).
+      setSelection((prev) => {
+        if (prev.size === 0) return prev
+        const fresh = new Map(result.items.map((n) => [n.id, n]))
+        return new Map([...prev].map(([id, n]) => [id, fresh.get(id) ?? n]))
+      })
     } catch (e) {
       if (seq === loadSeq.current) setError(String(e))
     } finally {
@@ -397,10 +423,11 @@ function App() {
   }
 
   function toggleSelected(id: string) {
-    setSelected((prev) => {
-      const next = new Set(prev)
+    setSelection((prev) => {
+      const next = new Map(prev)
+      const node = displayedNodes.find((n) => n.id === id)
       if (next.has(id)) next.delete(id)
-      else next.add(id)
+      else if (node) next.set(id, node)
       return next
     })
   }
@@ -445,6 +472,12 @@ function App() {
   async function handleDelete(node: NodeDto) {
     try {
       await api.deleteNode(node.id)
+      setSelection((prev) => {
+        if (!prev.has(node.id)) return prev
+        const next = new Map(prev)
+        next.delete(node.id)
+        return next
+      })
       if (preview?.id === node.id) closeDetails()
       await loadFolder(currentFolder.id)
     } catch (err) {
@@ -470,7 +503,7 @@ function App() {
     try {
       await (kind === 'copy' ? api.copyNode(node.id, targetId) : api.moveNode(node.id, targetId))
       if (kind === 'move' && preview?.id === node.id) closeDetails()
-      setSelected(new Set())
+      setSelection(new Map())
       setRowDialog(null)
       await loadFolder(currentFolder.id)
     } catch (err) {
@@ -518,11 +551,12 @@ function App() {
   }
 
   function toggleAll(ids: string[], select: boolean) {
-    setSelected((prev) => {
-      const next = new Set(prev)
+    setSelection((prev) => {
+      const next = new Map(prev)
       for (const id of ids) {
-        if (select) next.add(id)
-        else next.delete(id)
+        const node = displayedNodes.find((n) => n.id === id)
+        if (!select) next.delete(id)
+        else if (node) next.set(id, node)
       }
       return next
     })
@@ -531,7 +565,9 @@ function App() {
   /** Selected files in the order the list shows (previewFiles is the table's sorted file order): the dialog's starting order. */
   function mergeCandidates(): NodeDto[] {
     const ordered = previewFiles.some((f) => selected.has(f.id)) ? previewFiles : displayedNodes
-    return ordered.filter((n) => selected.has(n.id))
+    // Items picked on other pages follow the ones in view.
+    const inView = new Set(ordered.map((n) => n.id))
+    return [...ordered.filter((n) => selected.has(n.id)), ...selectedNodes.filter((n) => !inView.has(n.id))]
   }
 
   async function handleMerge(fileName: string, orderedIds: string[]) {
@@ -575,12 +611,14 @@ function App() {
     if (firstError) setError(`${ok} of ${items.length} succeeded. First error: ${firstError}`)
     setBulkProgress(null)
     setBulkDialog(null)
-    setSelected(new Set())
+    setSelection(new Map())
     await loadFolder(currentFolder.id)
   }
 
   const displayedNodes = searchResults ?? nodes
-  const selectedNodes = displayedNodes.filter((n) => selected.has(n.id))
+  const selectedNodes = [...selection.values()]
+  const shownIds = new Set(displayedNodes.map((n) => n.id))
+  const selectedElsewhere = selectedNodes.filter((n) => !shownIds.has(n.id)).length
   const allFilesSelected = selectedNodes.every((n) => n.isFile)
   const canCompare = selectedNodes.length === 2 && allFilesSelected
   const progressLabel = (verb: string) => (bulkProgress ? `${verb} ${bulkProgress.done} of ${bulkProgress.total}…` : `${verb}…`)
@@ -595,7 +633,7 @@ function App() {
       hint: nothingSelected ? selectFirst : 'Folders can’t be downloaded',
       run: () => downloadNodes(selectedFileIds),
     },
-    compare: { available: canCompare, hint: 'Select exactly two documents to compare them', run: () => setComparing(true) },
+    compare: { available: canCompare, hint: 'Select exactly two documents to compare them (the selection is kept when you change page)', run: () => setComparing(true) },
     merge: {
       available: !searchResults && allFilesSelected && selectedNodes.length > 1,
       hint: searchResults
@@ -632,11 +670,50 @@ function App() {
   const selectPreview = useCallback(
     (n: NodeDto) => {
       setDocPreview(null)
+      // Opening a document replaces the checkbox selection, so the side panel shows that document alone.
+      setSelection(new Map())
       setPreview({ id: n.id, view, folderId: currentFolder.id, searchResults })
       addRecentDoc(n)
     },
     [view, currentFolder.id, searchResults, addRecentDoc],
   )
+
+  /** Copies the link that opens the document in its folder (`/?node=<id>`, handled on startup below). */
+  async function shareLink(n: NodeDto) {
+    const link = shareUrl(n.id)
+    try {
+      await navigator.clipboard.writeText(link)
+      setNotice(`Link to ${n.name} copied`)
+    } catch {
+      // Clipboard blocked (e.g. plain http): show the link so it can still be copied by hand.
+      window.prompt('Copy this link', link)
+    }
+  }
+
+  // A shared link (?node=<id>): once signed in and the spaces are known, open the document in its folder.
+  useEffect(() => {
+    if (!username || !spaces || !linkedNodeId || linkHandled.current) return
+    linkHandled.current = true
+    window.history.replaceState(null, '', window.location.pathname)
+    api
+      .getNode(linkedNodeId)
+      .then((node) => {
+        const { space, trail } = locate(node, false)
+        addRecentDoc(node)
+        if (space) {
+          setSearchResults(null)
+          setSearchQuery('')
+          setCurrentSpace(space)
+          setPath(trail)
+          setSpaceTab('documents')
+          setView('spaces')
+          setDocPreview({ node, view: 'spaces' })
+        } else {
+          setDocPreview({ node, view: 'home' })
+        }
+      })
+      .catch(() => setError('That document doesn’t exist or you don’t have access to it.'))
+  })
 
   async function openRecent(doc: RecentDocument) {
     try {
@@ -761,7 +838,27 @@ function App() {
         ]
   const atSpaceRoot = currentSpace !== null && path.length === 0 && !searchResults
   const role = currentSpace ? roleLabel(currentSpace.role).toLowerCase() : ''
-  const clearSelection = () => setSelected(new Set())
+  const clearSelection = () => setSelection(new Map())
+  /** A click in the list keeps the full preview if it is open, otherwise shows the details panel. */
+  function showDetails(n: NodeDto) {
+    if (!previewOpen) setPreviewFull(false)
+    selectPreview(n)
+  }
+  // One selected row gets the same actions as its 3-dots menu.
+  const singleRowActions =
+    selectedNodes.length === 1
+      ? rowActions(selectedNodes[0], {
+          isSearchView: !!searchResults,
+          canManageFolders: isAdmin,
+          canDeleteFolders: isAdmin,
+          onPreview: showDetails,
+          onShare: shareLink,
+          onRename: (node) => setRowDialog({ kind: 'rename', node }),
+          onCopy: (node) => setRowDialog({ kind: 'copy', node }),
+          onMove: (node) => setRowDialog({ kind: 'move', node }),
+          onDelete: setNodeToDelete,
+        })
+      : undefined
 
   const fileTable = (
     <FileTable
@@ -778,11 +875,8 @@ function App() {
       onOpenFolder={openFolder}
       getLocation={searchResults ? locationLabel : undefined}
       onOpenLocation={(n) => openLocation(n, false)}
-      onPreview={(n) => {
-        // A click in the list keeps the full preview if it is open, otherwise shows the details panel.
-        if (!previewOpen) setPreviewFull(false)
-        selectPreview(n)
-      }}
+      onPreview={showDetails}
+      onShare={shareLink}
       activeId={docPreviewNode ? null : previewId}
       onFilesOrdered={setPreviewFiles}
       ownerNameOf={taskActivity.displayNameOf}
@@ -800,7 +894,14 @@ function App() {
       onSortChange={searchResults ? undefined : changeSort}
       footer={
         searchResults ? null : (
-          <Pager totalItems={totalItems} page={page} pageSize={pageSize} onPageChange={setPage} onPageSizeChange={changePageSize} />
+          <Pager
+            totalItems={totalItems}
+            page={page}
+            pageSize={pageSize}
+            selectedElsewhere={selectedElsewhere}
+            onPageChange={setPage}
+            onPageSizeChange={changePageSize}
+          />
         )
       }
     />
@@ -813,6 +914,7 @@ function App() {
       ownerName={detailsNode.createdByUser ? taskActivity.displayNameOf(detailsNode.createdByUser) : ''}
       location={searchResults ? locationLabel(detailsNode) : breadcrumb.map((c) => c.name).join(' / ')}
       onOpen={() => setPreviewFull(true)}
+      onShare={() => shareLink(detailsNode)}
       onClose={closeDetails}
     />
   )
@@ -905,7 +1007,7 @@ function App() {
   const sidePanel =
     threePane && inFolderView && !previewOpen ? (
       selectedNodes.length > 0 ? (
-        <SelectionPanel selected={selectedNodes} actions={selectionActions} onClear={clearSelection} />
+        <SelectionPanel selected={selectedNodes} elsewhere={selectedElsewhere} rowMenu={singleRowActions} actions={selectionActions} onClear={clearSelection} />
       ) : detailsNode ? (
         <aside className="side-panel">{detailsPanel}</aside>
       ) : currentSpace && !searchResults ? (
@@ -961,6 +1063,7 @@ function App() {
               onNewFolder={() => setCreatingFolder(true)}
               onNewFromTemplate={(id) => setTemplateToCreate(templates.find((t) => t.id === id) ?? null)}
               selectedCount={selectedNodes.length}
+              selectedElsewhere={selectedElsewhere}
               actions={selectionActions}
               onClearSelection={clearSelection}
             />
@@ -997,6 +1100,7 @@ function App() {
 
         <main className="main">
           {error && <ErrorToast message={error} onDismiss={() => setError(null)} />}
+          {!error && notice && <ErrorToast kind="info" message={notice} onDismiss={() => setNotice(null)} />}
 
           {view === 'home' && (
             <HomePage
