@@ -1,7 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-  <path d="M8 2h11l7 7v18a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z" fill="#1e2a44"/>
-  <path d="M19 2v5a2 2 0 0 0 2 2h5z" fill="#e0a52c"/>
-  <rect x="10" y="16" width="12" height="2.4" rx="1.2" fill="#f4f1ea"/>
-  <rect x="10" y="21" width="12" height="2.4" rx="1.2" fill="#f4f1ea"/>
-  <rect x="10" y="26" width="7" height="2.4" rx="1.2" fill="#f4f1ea"/>
+  <rect width="32" height="32" rx="7" fill="#e3f4ec"/>
+  <g transform="translate(4 4) scale(0.75)">
+    <path d="M2 20L16 27V30L2 23Z" fill="#0a2a20"/>
+    <path d="M30 20L16 27V30L30 23Z" fill="#0a2a20" opacity="0.85"/>
+    <path d="M16 13L30 20L16 27L2 20Z" fill="#123f31"/>
+    <path d="M2 14L16 21V24L2 17Z" fill="#175f46"/>
+    <path d="M30 14L16 21V24L30 17Z" fill="#175f46" opacity="0.85"/>
+    <path d="M16 7L30 14L16 21L2 14Z" fill="#1f7a58"/>
+    <path d="M2 8L16 15V18L2 11Z" fill="#5fb990"/>
+    <path d="M30 8L16 15V18L30 11Z" fill="#5fb990" opacity="0.85"/>
+    <path d="M16 1L30 8L16 15L2 8Z" fill="#8fdcb9"/>
+  </g>
 </svg>

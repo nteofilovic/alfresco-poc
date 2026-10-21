@@ -16,7 +16,7 @@ interface Props {
   loading: boolean
   selected: Set<string>
   /** Row briefly marked as new (e.g. the merged PDF); scrolled into view when set. */
-  highlightedId?: string | null
+  highlightedIds?: ReadonlySet<string>
   isSearchView: boolean
   searchQuery: string
   onToggleSelected: (id: string) => void
@@ -74,7 +74,7 @@ export function FileTable({
   nodes,
   loading,
   selected,
-  highlightedId,
+  highlightedIds,
   isSearchView,
   searchQuery,
   onToggleSelected,
@@ -184,8 +184,9 @@ export function FileTable({
   }, [activeId])
 
   useEffect(() => {
-    if (highlightedId) document.querySelector('.node-table tr.just-added')?.scrollIntoView({ block: 'nearest' })
-  }, [highlightedId, loading])
+    if (highlightedIds && highlightedIds.size > 0)
+      document.querySelector('.node-table tr.just-added')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [highlightedIds, loading])
 
   useEffect(() => {
     onFilesOrdered(sorted.filter((n) => n.isFile))
@@ -321,7 +322,7 @@ export function FileTable({
                 return (
                   <tr
                     key={node.id}
-                    className={`${selected.has(node.id) ? 'selected' : ''}${node.id === activeId ? ' previewing' : ''}${node.id === highlightedId ? ' just-added' : ''}`}
+                    className={`${selected.has(node.id) ? 'selected' : ''}${node.id === activeId ? ' previewing' : ''}${highlightedIds?.has(node.id) ?' just-added' : ''}`}
                   >
                     <td className="col-check">
                       {(node.isFile || canSelectFolders) && (

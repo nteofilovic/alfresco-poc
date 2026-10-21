@@ -2,6 +2,7 @@ import { FolderClosed, House, LogOut, Settings, SquareCheckBig, UserRound } from
 import type { ReactNode } from 'react'
 import { initials } from '../formatters'
 import { ActionsMenu } from './ActionsMenu'
+import { LayersMark } from './LayersMark'
 
 export type View = 'home' | 'spaces' | 'tasks' | 'admin' | 'profile'
 
@@ -57,7 +58,7 @@ export function Sidebar({ displayName, isAdmin, view, taskBadge = 0, onNavigate,
   return (
     <aside className="rail">
       <span className="rail-logo" aria-hidden="true">
-        Z
+        <LayersMark size={24} />
       </span>
       <span className="sr-only">Zapis</span>
 

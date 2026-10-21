@@ -4,6 +4,7 @@ import { LogOut, Search, UserRound } from 'lucide-react'
 import { initials } from '../formatters'
 import { IS_MAC } from '../keyboard'
 import { ActionsMenu } from './ActionsMenu'
+import { LayersMark } from './LayersMark'
 import type { View } from './Sidebar'
 import { NotificationsButton } from './Topbar'
 
@@ -39,7 +40,7 @@ export function TopHeader({ displayName, view, onNavigate, onLogout, searchQuery
     <header className="top-header">
       <button type="button" className="top-header-brand" onClick={() => onNavigate('home')} aria-label="Zapis, go to Home">
         <span className="top-header-logo" aria-hidden="true">
-          Z
+          <LayersMark size={20} />
         </span>
         <span aria-hidden="true">Zapis</span>
       </button>

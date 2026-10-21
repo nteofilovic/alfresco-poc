@@ -116,9 +116,19 @@ function App() {
   const pagingRef = useRef({ page: 0, pageSize: DEFAULT_PAGE_SIZE, sortKey: 'name' as NodeSortKey, sortDir: 'asc' as NodeSortDir })
   const loadSeq = useRef(0)
   // Row of the freshly merged PDF, marked for ~2s.
-  const [highlightedId, setHighlightedId] = useState<string | null>(null)
+  const [highlightedIds, setHighlightedIds] = useState<ReadonlySet<string>>(new Set())
   const highlightTimer = useRef<number | undefined>(undefined)
   useEffect(() => () => window.clearTimeout(highlightTimer.current), [])
+  /** Briefly marks rows that were just added or changed; matches the row-just-added animation length in App.css. */
+  const flashRows = useCallback((ids: string[]) => {
+    window.clearTimeout(highlightTimer.current)
+    setHighlightedIds(new Set())
+    // Restart on the next frame so re-flashing a row that is still marked replays the animation.
+    requestAnimationFrame(() => {
+      setHighlightedIds(new Set(ids))
+      highlightTimer.current = window.setTimeout(() => setHighlightedIds(new Set()), 3000)
+    })
+  }, [])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
@@ -437,18 +447,21 @@ function App() {
       if (files.length === 0) return
       setLoading(true)
       setError(null)
+      const uploaded: string[] = []
       try {
         for (const file of files) {
-          await api.uploadFile(parentId, file)
+          uploaded.push((await api.uploadFile(parentId, file)).id)
         }
-        if (parentId === currentFolder.id) await loadFolder(currentFolder.id)
       } catch (err) {
         setError(String(err))
       } finally {
+        // Reload even after a partial failure so the files that did get in show up.
+        if (parentId === currentFolder.id && uploaded.length > 0) await loadFolder(currentFolder.id)
         setLoading(false)
       }
+      if (parentId === currentFolder.id) flashRows(uploaded)
     },
-    [currentFolder.id, loadFolder],
+    [currentFolder.id, loadFolder, flashRows],
   )
 
   const uploadFiles = useCallback((files: File[]) => uploadFilesTo(currentFolder.id, files), [uploadFilesTo, currentFolder.id])
@@ -464,9 +477,10 @@ function App() {
 
   /** Throws on failure so the dialog can show the message inline. */
   async function handleCreateFolder(name: string) {
-    await api.createFolder(currentFolder.id, name)
+    const created = await api.createFolder(currentFolder.id, name)
     setCreatingFolder(false)
     await loadFolder(currentFolder.id)
+    flashRows([created.id])
   }
 
   async function handleDelete(node: NodeDto) {
@@ -493,7 +507,10 @@ function App() {
     setRowDialog(null)
     setError(null)
     if (searchResults) setSearchResults(await api.search(searchQuery))
-    else await loadFolder(currentFolder.id)
+    else {
+      await loadFolder(currentFolder.id)
+      flashRows([node.id])
+    }
   }
 
   /** Single-item copy/move: same flow as the bulk actions, with one id. */
@@ -516,9 +533,10 @@ function App() {
 
   /** Throws on failure so the dialog can show the message inline. */
   async function handleCreateFromTemplate(template: FolderTemplate, name: string) {
-    await api.createFromTemplate(currentFolder.id, template.id, name)
+    const created = await api.createFromTemplate(currentFolder.id, template.id, name)
     setTemplateToCreate(null)
     await loadFolder(currentFolder.id)
+    flashRows([created.id])
   }
 
   function handleSearch(e: FormEvent) {
@@ -584,12 +602,7 @@ function App() {
       setBulkDialog(null)
       await loadFolder(currentFolder.id)
     }
-    if (mergedId) {
-      // Briefly mark the new document's row once the reloaded list shows it.
-      window.clearTimeout(highlightTimer.current)
-      setHighlightedId(mergedId)
-      highlightTimer.current = window.setTimeout(() => setHighlightedId(null), 2000)
-    }
+    if (mergedId) flashRows([mergedId])
   }
 
   /** Runs `action` over the selected items one at a time, finishing the rest after a failure, then reports and refreshes. */
@@ -866,7 +879,7 @@ function App() {
       nodes={displayedNodes}
       loading={loading}
       selected={selected}
-      highlightedId={highlightedId}
+      highlightedIds={highlightedIds}
       isSearchView={!!searchResults}
       searchQuery={searchQuery}
       onToggleSelected={toggleSelected}
@@ -1129,6 +1142,7 @@ function App() {
                 setDocPreview({ node, view: 'tasks' })
               }}
               onError={setError}
+              onActivityChanged={refreshTaskActivity}
             />
           ) : view === 'profile' ? (
             <ProfilePage username={username} onProfileUpdated={() => {}} appearance={appearance} onAppearanceChange={applyAppearance} />
@@ -1142,7 +1156,6 @@ function App() {
               />
             ) : null
           ) : view === 'home' ? null : !inFolderView ? (
-              onActivityChanged={refreshTaskActivity}
             <SpacesPage spaces={spaces} isAdmin={isAdmin} onOpen={openSpace} />
           ) : threePane ? (
             threePaneFolder

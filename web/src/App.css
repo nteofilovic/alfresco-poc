@@ -1553,30 +1553,38 @@ button.link-accent:hover {
   background: #f8f9fd;
 }
 
-/* Freshly created row (merged PDF): stamp tint + left accent, held ~1.4s, faded over the last 0.6s.
+/* Freshly added or changed row (upload, merge, new folder, rename): stamp tint + left accent, a quick
+   fade-in, held until ~1.7s, then faded over the rest of the 3s (App.tsx clears the class after 3s).
    Animations beat the hover/selected/previewing backgrounds while running, then the row reverts to them. */
 .node-table tbody tr.just-added {
-  animation: row-just-added 2s ease-out;
+  animation: row-just-added 3s ease-in-out;
 }
 
 .node-table tbody tr.just-added td:first-child {
-  animation: row-just-added-accent 2s ease-out;
+  animation: row-just-added-accent 3s ease-in-out;
 }
 
 @keyframes row-just-added {
-  0%,
-  70% {
+  0% {
+    background-color: transparent;
+  }
+  8%,
+  55% {
     background-color: var(--stamp-soft);
+  }
+  100% {
+    background-color: transparent;
   }
 }
 
 @keyframes row-just-added-accent {
   0%,
-  70% {
-    box-shadow: inset 3px 0 0 var(--stamp);
-  }
   100% {
     box-shadow: inset 3px 0 0 transparent;
+  }
+  8%,
+  55% {
+    box-shadow: inset 3px 0 0 var(--stamp);
   }
 }
 
@@ -2555,145 +2563,159 @@ button.link-accent:hover {
 /* ---------- Login ---------- */
 
 .login-screen {
+  --pine: #0f3d2e;
+  --forest: #1e6b52;
+  --mist: #e7efea;
+  --login-ink: #142019;
+  --login-ink-2: #5a6862;
+  --login-line: #d5ded9;
   min-height: 100vh;
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
-  background: var(--sheet);
+  grid-template-columns: 1.25fr 1fr;
+  background: #fff;
+  color: var(--login-ink);
 }
 
 .login-brand {
   position: relative;
-  overflow: hidden;
-  background: var(--stamp);
-  color: #fff;
-  padding: 40px clamp(32px, 5vw, 72px) 56px;
+  isolation: isolate;
+  background: #eef5f0;
+  color: var(--login-ink);
+  padding: 48px 56px;
   display: flex;
   flex-direction: column;
-  gap: 32px;
+  justify-content: space-between;
+  gap: 24px;
+  overflow: hidden;
+}
+
+/* Isometric grid at the slabs' own angle, fading out towards the edges. */
+.login-brand::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image:
+    repeating-linear-gradient(25.4deg, #cfe0d5 0 1px, transparent 1px 46px),
+    repeating-linear-gradient(-25.4deg, #cfe0d5 0 1px, transparent 1px 46px);
+  -webkit-mask-image: radial-gradient(ellipse 65% 55% at 50% 50%, #000, transparent 100%);
+  mask-image: radial-gradient(ellipse 65% 55% at 50% 50%, #000, transparent 100%);
 }
 
 .login-wordmark {
   display: flex;
   align-items: center;
   gap: 10px;
+  font-weight: 800;
   font-size: 20px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
 }
 
 .login-logo {
-  width: 32px;
-  height: 32px;
-  border-radius: 9px;
-  background: #fff;
-  color: var(--stamp);
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: #e3f4ec;
   display: grid;
   place-items: center;
-  font-size: 16px;
+}
+
+.login-art {
+  width: 100%;
+  max-width: 720px;
+  align-self: center;
+  filter: drop-shadow(0 26px 30px rgba(15, 61, 46, 0.22));
+}
+
+/* Each slab drops into the stack in turn, then lifts when pointed at. */
+.login-slab {
+  transform-box: fill-box;
+  transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.3, 1);
+  animation: slab-drop 0.7s cubic-bezier(0.2, 0.9, 0.25, 1) backwards;
+  animation-delay: calc(var(--i) * 28ms + 120ms);
+}
+
+.login-slab:hover {
+  transform: translateY(-9px);
+}
+
+@keyframes slab-drop {
+  from {
+    opacity: 0;
+    transform: translateY(-64px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-slab {
+    animation: none;
+    transition: none;
+  }
+}
+
+.login-copy {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  align-items: end;
+  gap: 32px;
+}
+
+/* The big line states what Zapis holds; the small one says what it is. */
+.login-lead {
+  font-size: clamp(30px, 3.2vw, 44px);
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  line-height: 1.05;
+  color: var(--pine);
+  max-width: 13ch;
 }
 
 .login-headline {
-  margin-top: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.login-headline-name {
-  font-size: clamp(44px, 5.4vw, 72px);
-  font-weight: 700;
-  letter-spacing: -0.04em;
-  line-height: 1;
-}
-
-.login-headline-tagline {
+  padding-left: 28px;
+  border-left: 2px solid var(--forest);
+  font-size: clamp(16px, 1.45vw, 20px);
+  font-weight: 500;
+  letter-spacing: -0.015em;
+  line-height: 1.3;
+  color: var(--forest);
   max-width: 20ch;
-  font-size: clamp(22px, 2.4vw, 32px);
-  font-weight: 500;
-  letter-spacing: -0.02em;
-  line-height: 1.2;
-  color: rgba(255, 255, 255, 0.82);
 }
 
-/* The formats Zapis handles, settled into one tidy stack behind a single document. */
-.login-stack {
-  --sheet-w: 200px;
-  position: relative;
-  flex: 1;
-  min-height: 280px;
-}
-
-.login-sheet {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: var(--sheet-w);
-  height: 252px;
-  margin: -126px 0 0 calc(var(--sheet-w) / -2);
-  padding: 18px 16px;
+.login-stats {
   display: flex;
-  flex-direction: column;
-  gap: 9px;
-  background: #fff;
-  border-radius: 12px;
-  box-shadow: 0 10px 28px rgba(10, 16, 70, 0.28);
-  transform-origin: 50% 110%;
-  color: var(--muted);
+  margin-top: 26px;
+  padding-top: 22px;
+  border-top: 1px solid #c3d8cb;
 }
 
-.login-sheet-0 {
-  transform: translateX(-72px) rotate(-9deg);
-  opacity: 0.5;
-}
-.login-sheet-1 {
-  transform: translateX(-54px) rotate(-6deg);
-  opacity: 0.62;
-}
-.login-sheet-2 {
-  transform: translateX(-36px) rotate(-4deg);
-  opacity: 0.74;
-}
-.login-sheet-3 {
-  transform: translateX(-18px) rotate(-2deg);
-  opacity: 0.86;
-}
-.login-sheet-4 {
-  transform: translateX(0) rotate(0deg);
-  opacity: 0.95;
+.login-stats > div {
+  padding: 0 28px;
+  border-left: 1px solid #c3d8cb;
 }
 
-.login-sheet-merged {
-  transform: translateX(22px) rotate(3deg);
-  z-index: 1;
-  color: var(--stamp);
-  box-shadow: 0 18px 40px rgba(10, 16, 70, 0.38);
+.login-stats > div:first-child {
+  padding-left: 0;
+  border-left: 0;
 }
 
-.login-sheet-ext {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 500;
-  margin-bottom: 6px;
+.login-stats b {
+  display: block;
+  font-size: 24px;
+  color: var(--forest);
+  letter-spacing: -0.02em;
 }
 
-.login-sheet-line {
-  height: 7px;
-  border-radius: 4px;
-  background: var(--tab-back);
-}
-
-.login-sheet-merged .login-sheet-line {
-  background: var(--stamp-soft-hover);
-}
-
-.login-sheet-line.short {
-  width: 60%;
+.login-stats span {
+  font-size: 13px;
+  color: #3f5a4e;
 }
 
 .login-card {
   display: flex;
   align-items: center;
-  padding: 56px clamp(32px, 6vw, 88px);
+  justify-content: center;
+  padding: 40px 56px;
+  background: #fff;
 }
 
 .login-panel {
@@ -2704,88 +2726,77 @@ button.link-accent:hover {
 .login-title {
   font-size: 30px;
   font-weight: 700;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.03em;
 }
 
 .login-hint {
-  margin: 8px 0 28px;
-  color: var(--muted);
+  margin: 8px 0 0;
+  color: var(--login-ink-2);
   font-size: 15px;
+  line-height: 1.5;
 }
 
 .login-form {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  width: 100%;
+  margin-top: 28px;
+  display: grid;
+  gap: 18px;
 }
 
 .login-form label {
-  font-size: 14px;
+  display: block;
+  font-size: 13.5px;
   font-weight: 600;
-  color: var(--ink-soft);
-  margin-top: 12px;
+  margin-bottom: 7px;
 }
 
-.login-form label:first-of-type {
-  margin-top: 0;
-}
-
-.input-with-icon {
-  position: relative;
-  display: flex;
-  align-items: center;
-  color: var(--muted);
-}
-
-.input-with-icon > svg {
-  position: absolute;
-  left: 13px;
-  pointer-events: none;
-}
-
-.input-with-icon input {
+.login-form input {
   width: 100%;
-  height: var(--control);
-  padding: 0 12px 0 40px;
-  border: 1px solid var(--rule-input);
-  border-radius: var(--radius);
-  font-size: 15px;
-  color: var(--ink);
+  height: 48px;
+  border: 1px solid var(--login-line);
+  border-radius: 10px;
+  padding: 0 14px;
+  font: inherit;
+  font-size: 15.5px;
+  color: var(--login-ink);
   background: #fff;
 }
 
-.input-with-icon input:has(+ .input-toggle) {
-  padding-right: 46px;
+.login-form input:focus {
+  outline: none;
+  border-color: var(--forest);
+  box-shadow: 0 0 0 4px rgba(30, 107, 82, 0.15);
 }
 
-.input-with-icon input:focus-visible {
-  outline: none;
-  border-color: var(--stamp);
-  box-shadow: 0 0 0 3px var(--stamp-soft-hover);
+.login-password {
+  position: relative;
+}
+
+.login-password input {
+  padding-right: 48px;
 }
 
 .input-toggle {
   position: absolute;
-  right: 4px;
+  right: 6px;
+  top: 6px;
   width: 36px;
   height: 36px;
   display: grid;
   place-items: center;
   border: none;
-  border-radius: var(--radius-nav);
+  border-radius: 8px;
   background: transparent;
-  color: var(--muted);
+  color: var(--login-ink-2);
   cursor: pointer;
 }
 
 .input-toggle:hover {
-  background: var(--fog);
-  color: var(--ink);
+  background: var(--mist);
+  color: var(--login-ink);
 }
 
 .input-toggle:focus-visible {
-  outline: 2px solid var(--stamp);
+  outline: 2px solid var(--forest);
   outline-offset: -2px;
 }
 
@@ -2796,10 +2807,9 @@ button.link-accent:hover {
   background: var(--danger-soft);
   color: var(--danger);
   border: 1px solid var(--danger-line);
-  border-radius: var(--radius);
+  border-radius: 10px;
   padding: 10px 12px;
   font-size: 14px;
-  margin-top: 8px;
 }
 
 .login-error svg {
@@ -2807,8 +2817,28 @@ button.link-accent:hover {
   margin-top: 2px;
 }
 
-.login-form .btn-block {
-  margin-top: 16px;
+.login-submit {
+  height: 50px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--forest);
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  font-size: 15.5px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.login-submit:hover:not(:disabled) {
+  background: var(--pine);
+}
+
+.login-submit:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 /* ---------- Responsive ---------- */
@@ -2836,31 +2866,28 @@ button.link-accent:hover {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .login-art,
+  .login-stats {
+    display: none;
+  }
+
   .login-brand {
-    padding: 28px 24px 32px;
+    padding: 28px 24px;
+  }
+
+  .login-copy {
+    grid-template-columns: minmax(0, 1fr);
     gap: 16px;
   }
 
-  .login-stack {
-    flex: none;
-    min-height: 0;
-    height: 190px;
-    margin-top: 28px;
-    transform: scale(0.7);
-    transform-origin: 50% 40%;
+  .login-lead {
+    font-size: 28px;
   }
 
   .login-headline {
-    margin-top: 0;
-    gap: 6px;
-  }
-
-  .login-headline-name {
-    font-size: 40px;
-  }
-
-  .login-headline-tagline {
-    font-size: 20px;
+    padding-left: 0;
+    border-left: 0;
+    font-size: 17px;
   }
 
   .login-card {
@@ -3273,33 +3300,6 @@ textarea {
   border-radius: var(--radius);
 }
 
-.task-none,
-.task-readonly {
-  font-size: 14px;
-  color: var(--muted);
-}
-
-.task-attach-list {
-  list-style: none;
-  margin: 4px 0 8px;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.task-attach-list li {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 8px;
-  border-radius: var(--radius);
-  font-size: 14px;
-}
-
-.task-attach-list li.active {
-  background: var(--stamp-soft);
-}
 .task-msg.mine {
   align-self: flex-end;
   border: 1px solid var(--rule);
@@ -3330,6 +3330,33 @@ textarea {
   font-weight: 600;
 }
 
+.task-none,
+.task-readonly {
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.task-attach-list {
+  list-style: none;
+  margin: 4px 0 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.task-attach-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: var(--radius);
+  font-size: 14px;
+}
+
+.task-attach-list li.active {
+  background: var(--stamp-soft);
+}
 
 .task-attach-name {
   flex: 1;
@@ -4626,12 +4653,9 @@ textarea {
   height: 34px;
   margin-bottom: 14px;
   border-radius: 9px;
-  background: var(--stamp);
-  color: #fff;
+  background: #e3f4ec;
   display: grid;
   place-items: center;
-  font-weight: 700;
-  font-size: 15px;
 }
 
 .rail-nav {
@@ -5292,9 +5316,7 @@ textarea {
   border-radius: 6px;
   display: grid;
   place-items: center;
-  background: #fff;
-  color: var(--stamp);
-  font-size: 15px;
+  background: #e3f4ec;
 }
 
 .top-header-search {
