@@ -85,6 +85,7 @@ public class AlfrescoClient {
         return post("/nodes/" + enc(parentId) + "/children", body);
     }
 
+    /** Without {@code overwrite}, a name clash is resolved by Alfresco adding an index: test.pdf becomes test-1.pdf. */
     public JsonNode uploadFile(String parentId, String filename, byte[] content, String contentType, boolean overwrite) {
         MultipartBodyBuilder mb = new MultipartBodyBuilder();
         mb.part("filedata", content)
@@ -92,6 +93,7 @@ public class AlfrescoClient {
                 .filename(filename);
         mb.part("name", filename);
         mb.part("overwrite", String.valueOf(overwrite));
+        if (!overwrite) mb.part("autoRename", "true"); // multipart takes it as a form field, not a query parameter
 
         return core.post()
                 .uri("/nodes/" + enc(parentId) + "/children")
@@ -526,7 +528,14 @@ public class AlfrescoClient {
     private void handleError(org.springframework.http.HttpRequest req,
                               org.springframework.http.client.ClientHttpResponse resp) throws java.io.IOException {
         String body = new String(resp.getBody().readAllBytes());
-        log.warn("Alfresco API error {} on {} {}: {}", resp.getStatusCode().value(), req.getMethod(), req.getURI(), body);
+        // A miss on a relativePath lookup is how findByRelativePath asks "is there one?"; it is not a failure.
+        boolean lookupMiss = resp.getStatusCode().value() == 404
+                && req.getURI().getRawQuery() != null && req.getURI().getRawQuery().contains("relativePath=");
+        if (lookupMiss) {
+            log.debug("Alfresco has nothing at {}", req.getURI());
+        } else {
+            log.warn("Alfresco API error {} on {} {}: {}", resp.getStatusCode().value(), req.getMethod(), req.getURI(), body);
+        }
         throw new AlfrescoApiException(resp.getStatusCode().value(), body);
     }
 
