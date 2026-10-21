@@ -1142,6 +1142,7 @@ function App() {
               />
             ) : null
           ) : view === 'home' ? null : !inFolderView ? (
+              onActivityChanged={refreshTaskActivity}
             <SpacesPage spaces={spaces} isAdmin={isAdmin} onOpen={openSpace} />
           ) : threePane ? (
             threePaneFolder

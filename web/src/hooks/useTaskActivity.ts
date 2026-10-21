@@ -30,6 +30,7 @@ const isOpen = (t: TaskDto) => !t.resolved && t.status !== 'done'
  */
 export function useTaskActivity(username: string | null) {
   const [assigned, setAssigned] = useState<TaskDto[] | null>(null)
+  const [created, setCreated] = useState<TaskDto[]>([])
   const [completions, setCompletions] = useState<TaskNotification[]>([])
   const [dismissed, setDismissed] = useState<Set<string>>(() => new Set())
   const [assignees, setAssignees] = useState<TaskAssignee[]>([])
@@ -57,6 +58,12 @@ export function useTaskActivity(username: string | null) {
       })
       .catch(() => current() && setFailed(true))
 
+    // Only needed for unread messages on tasks the user handed out.
+    api
+      .listTasks('created')
+      .then((list) => current() && setCreated((list ?? []).filter((t) => t && t.id)))
+      .catch(() => {})
+
     api
       .taskNotifications()
       .then((n) => current() && setCompletions((n ?? []).filter((x) => x && x.id)))
@@ -78,6 +85,7 @@ export function useTaskActivity(username: string | null) {
     seq.current++
     assigneesLoaded.current = false
     setAssigned(null)
+    setCreated([])
     setCompletions([])
     setDismissed(new Set())
     setAssignees([])
@@ -96,6 +104,11 @@ export function useTaskActivity(username: string | null) {
     () => (assigned ?? []).filter((t) => t.status === 'new' && !t.resolved && !dismissed.has(t.id)),
     [assigned, dismissed],
   )
+  // A task assigned to yourself shows up in both lists; count its messages once.
+  const unreadMessageCount = useMemo(() => {
+    const byId = new Map([...(assigned ?? []), ...created].map((t) => [t.id, t]))
+    return [...byId.values()].reduce((sum, t) => sum + (t.unreadMessages ?? 0), 0)
+  }, [assigned, created])
   const openTasks = (assigned ?? []).filter(isOpen)
   const overdueCount = openTasks.filter((t) => isOverdue(t.dueDate)).length
   // The open task due soonest (undated ones last, newest first among them).
@@ -142,8 +155,9 @@ export function useTaskActivity(username: string | null) {
     openCount: openTasks.length,
     overdueCount,
     nextTask,
-    /** Unseen notices, for the rail badge. */
-    badgeCount: newAssignments.length + completions.length,
+    unreadMessageCount,
+    /** Unseen notices and unread task messages, for the rail badge. */
+    badgeCount: newAssignments.length + completions.length + unreadMessageCount,
     assignees,
     nameOf,
     displayNameOf,

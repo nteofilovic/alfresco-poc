@@ -70,6 +70,7 @@ function normalizeTask(t: TaskDto): TaskDto {
     attachments: t.attachments ?? [],
     siteId: t.siteId ?? null,
     siteTitle: t.siteTitle ?? null,
+    unreadMessages: t.unreadMessages ?? 0,
   }
 }
 
@@ -180,13 +181,23 @@ export interface TaskDto {
   creator: string
   assignee: string
   status: TaskStatus
-  /** The assignee's running message to the creator. */
+  /** Legacy single note from before task conversations; the conversation itself is `getTaskMessages`. */
   message: string
   attachments: TaskAttachment[]
   resolved: boolean
   /** The space the task belongs to; null when unknown. */
   siteId: string | null
   siteTitle: string | null
+  /** The other party's messages the viewer has not opened yet. */
+  unreadMessages: number
+}
+
+export interface TaskMessage {
+  id: string
+  /** Username. */
+  author: string
+  text: string
+  createdAt: string
 }
 
 export interface NewTask {
@@ -494,6 +505,13 @@ export const api = {
     fetch(`/api/tasks/${encodeURIComponent(id)}/resolve`, jsonInit('POST', { message, cancelled }))
       .then((r) => handle<TaskDto>(r))
       .then(normalizeTask),
+
+  /** Opening the conversation marks it read for the caller. */
+  getTaskMessages: (id: string) =>
+    fetch(`/api/tasks/${encodeURIComponent(id)}/messages`, { credentials: 'include' }).then((r) => handle<TaskMessage[]>(r)),
+
+  postTaskMessage: (id: string, text: string) =>
+    fetch(`/api/tasks/${encodeURIComponent(id)}/messages`, jsonInit('POST', { text })).then((r) => handle<TaskMessage>(r)),
 
   taskNotifications: () =>
     fetch('/api/tasks/notifications', { credentials: 'include' }).then((r) => handle<TaskNotification[]>(r)),

@@ -2,8 +2,10 @@ package ch.dmspoc.api.controller;
 
 import ch.dmspoc.api.dto.AssigneeDto;
 import ch.dmspoc.api.dto.CreateTaskRequest;
+import ch.dmspoc.api.dto.PostTaskMessageRequest;
 import ch.dmspoc.api.dto.ResolveTaskRequest;
 import ch.dmspoc.api.dto.TaskDto;
+import ch.dmspoc.api.dto.TaskMessageDto;
 import ch.dmspoc.api.dto.TaskNotificationDto;
 import ch.dmspoc.api.dto.UpdateTaskRequest;
 import ch.dmspoc.api.exception.AlfrescoApiException;
@@ -57,6 +59,17 @@ public class TaskController {
     @GetMapping("/{id}")
     public TaskDto get(@PathVariable String id, HttpSession session) {
         return tasks.get(id, currentUser(session));
+    }
+
+    @GetMapping("/{id}/messages")
+    public List<TaskMessageDto> messages(@PathVariable String id, HttpSession session) {
+        return tasks.messages(id, currentUser(session));
+    }
+
+    @PostMapping("/{id}/messages")
+    @ResponseStatus(HttpStatus.CREATED)
+    public TaskMessageDto postMessage(@PathVariable String id, @RequestBody PostTaskMessageRequest request, HttpSession session) {
+        return tasks.postMessage(id, currentUser(session), request.text());
     }
 
     @PostMapping

@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import { ArrowLeft, CheckCircle2, TriangleAlert } from 'lucide-react'
-import { api, type TaskAttachment, type TaskDto, type TaskStatus } from '../api'
+import { ArrowLeft, CheckCircle2, Send, TriangleAlert } from 'lucide-react'
+import { api, type TaskAttachment, type TaskDto, type TaskMessage, type TaskStatus } from '../api'
 import { TASK_STATUSES, TASK_STATUS_LABELS, apiErrorMessage, formatDate, formatDay, isOverdue, kindFor } from '../formatters'
 import { DialogShell } from './DialogShell'
 import { FileIcon } from './FileIcon'
@@ -14,34 +14,66 @@ interface Props {
   activeAttachmentId: string | null
   onBack: () => void
   onUpdated: (task: TaskDto) => void
+  /** The conversation was opened (and so marked read) or written to; lets the rail badge catch up. */
+  onMessagesChanged: () => void
   onOpenAttachment: (attachment: TaskAttachment) => void
 }
 
-/** `DD.MM.YYYY HH:MM:SS` in local time. */
-function timestamp(date = new Date()): string {
-  const p = (n: number) => String(n).padStart(2, '0')
-  return `${p(date.getDate())}.${p(date.getMonth() + 1)}.${date.getFullYear()} ${p(date.getHours())}:${p(date.getMinutes())}:${p(date.getSeconds())}`
-}
-
-/** The assignee's message is one running text; new input is appended below what is already there, prefixed with the time it was added. */
-function composeMessage(existing: string, addition: string, label = ''): string {
-  const text = `[${timestamp()}] ${label}${addition.trim()}`
-  return existing.trim() ? `${existing.trimEnd()}\n\n${text}` : text
-}
-
-export function TaskDetail({ task, username, nameOf, activeAttachmentId, onBack, onUpdated, onOpenAttachment }: Props) {
+export function TaskDetail({ task, username, nameOf, activeAttachmentId, onBack, onUpdated, onMessagesChanged, onOpenAttachment }: Props) {
   const [status, setStatus] = useState<TaskStatus>(task.status)
-  const [addition, setAddition] = useState('')
+  const [messages, setMessages] = useState<TaskMessage[] | null>(null)
+  const [messagesError, setMessagesError] = useState<string | null>(null)
+  const [draft, setDraft] = useState('')
+  const [posting, setPosting] = useState(false)
   const [reason, setReason] = useState('')
   const [saving, setSaving] = useState(false)
   const [confirming, setConfirming] = useState<'resolve' | 'cancel' | null>(null)
   const [resolving, setResolving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const canEdit = task.assignee === username && !task.resolved
+  const isAssignee = task.assignee === username
+  const canEdit = isAssignee && !task.resolved
   const overdue = !task.resolved && task.status !== 'done' && isOverdue(task.dueDate)
-  const hasAddition = addition.trim().length > 0
-  const dirty = status !== task.status || hasAddition
+  const hasDraft = draft.trim().length > 0
+  const dirty = status !== task.status
+
+  // Opening a task loads its conversation, which also marks it read on the server.
+  useEffect(() => {
+    let cancelled = false
+    api
+      .getTaskMessages(task.id)
+      .then((list) => {
+        if (cancelled) return
+        setMessages(list)
+        if (task.unreadMessages > 0) {
+          onUpdated({ ...task, unreadMessages: 0 })
+          onMessagesChanged()
+        }
+      })
+      .catch((err) => !cancelled && setMessagesError(apiErrorMessage(err)))
+    return () => {
+      cancelled = true
+    }
+    // Only when a different task is opened; `task` itself changes with every status save.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [task.id])
+
+  async function post(e: FormEvent) {
+    e.preventDefault()
+    if (!hasDraft || posting) return
+    setPosting(true)
+    setMessagesError(null)
+    try {
+      const sent = await api.postTaskMessage(task.id, draft)
+      setMessages((list) => [...(list ?? []), sent])
+      setDraft('')
+      onMessagesChanged()
+    } catch (err) {
+      setMessagesError(apiErrorMessage(err))
+    } finally {
+      setPosting(false)
+    }
+  }
 
   async function save(e: FormEvent) {
     e.preventDefault()
@@ -54,11 +86,7 @@ export function TaskDetail({ task, username, nameOf, activeAttachmentId, onBack,
     setSaving(true)
     setError(null)
     try {
-      const updated = await api.updateTask(task.id, {
-        ...(status !== task.status ? { status } : {}),
-        ...(hasAddition ? { message: composeMessage(task.message, addition) } : {}),
-      })
-      setAddition('')
+      const updated = await api.updateTask(task.id, { status })
       setStatus(updated.status)
       onUpdated(updated)
     } catch (err) {
@@ -73,14 +101,15 @@ export function TaskDetail({ task, username, nameOf, activeAttachmentId, onBack,
     setError(null)
     try {
       const cancelling = confirming === 'cancel'
-      let message: string | undefined
-      if (hasAddition) message = composeMessage(task.message, addition)
-      if (cancelling) message = composeMessage(message ?? task.message, reason, 'Cancelation information: ')
-      const updated = await api.resolveTask(task.id, message, cancelling)
-      setAddition('')
+      // A message typed but not sent yet goes out first, so it isn't lost when the thread closes.
+      if (hasDraft) await api.postTaskMessage(task.id, draft)
+      const updated = await api.resolveTask(task.id, cancelling ? reason : undefined, cancelling)
+      setDraft('')
       setReason('')
       setConfirming(null)
       onUpdated(updated)
+      onMessagesChanged()
+      api.getTaskMessages(task.id).then(setMessages).catch(() => {})
     } catch (err) {
       setError(apiErrorMessage(err))
       setConfirming(null)
@@ -160,8 +189,49 @@ export function TaskDetail({ task, username, nameOf, activeAttachmentId, onBack,
       </section>
 
       <section className="task-section" aria-labelledby="task-msg-h">
-        <h4 id="task-msg-h">Message from {nameOf(task.assignee)}</h4>
-        {task.message.trim() ? <p className="task-text task-message">{task.message}</p> : <p className="task-none">No message yet.</p>}
+        <h4 id="task-msg-h">Conversation</h4>
+        {messages === null && !messagesError ? (
+          <p className="task-none">Loading…</p>
+        ) : messages && messages.length === 0 ? (
+          <p className="task-none">No messages yet.</p>
+        ) : (
+          <ul className="task-thread">
+            {(messages ?? []).map((m) => (
+              <li key={m.id} className={`task-msg${m.author === username ? ' mine' : ''}`}>
+                <div className="task-msg-meta">
+                  <span className="task-msg-author">{nameOf(m.author)}</span>
+                  <time dateTime={m.createdAt}>{formatDate(m.createdAt)}</time>
+                </div>
+                <p className="task-text">{m.text}</p>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {!task.resolved && (
+          <form className="task-compose" onSubmit={post}>
+            <label className="dialog-field">
+              <span className="sr-only">New message</span>
+              <textarea
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                rows={3}
+                maxLength={2000}
+                placeholder={`Write to ${nameOf(isAssignee ? task.creator : task.assignee)}…`}
+                disabled={posting}
+              />
+            </label>
+            <div className="task-actions">
+              <button type="submit" className="btn btn-primary" disabled={!hasDraft || posting}>
+                <Send size={14} aria-hidden="true" />
+                {posting ? 'Sending…' : 'Send'}
+              </button>
+            </div>
+          </form>
+        )}
+        <p className="dialog-error" role="alert">
+          {messagesError}
+        </p>
       </section>
 
       {canEdit ? (
@@ -176,16 +246,6 @@ export function TaskDetail({ task, username, nameOf, activeAttachmentId, onBack,
                 </option>
               ))}
             </select>
-          </label>
-          <label className="dialog-field">
-            Add to message
-            <textarea
-              value={addition}
-              onChange={(e) => setAddition(e.target.value)}
-              rows={3}
-              placeholder="Tell the creator how it's going…"
-              disabled={saving}
-            />
           </label>
           <p className="dialog-error" role="alert">
             {error}
@@ -206,9 +266,9 @@ export function TaskDetail({ task, username, nameOf, activeAttachmentId, onBack,
             ? task.status === 'cancelled'
               ? 'This task has been cancelled.'
               : 'This task has been resolved.'
-            : task.assignee === username
+            : isAssignee
               ? ''
-              : `Only ${nameOf(task.assignee)} can update this task.`}
+              : `Only ${nameOf(task.assignee)} can change the status of this task.`}
         </p>
       )}
 
@@ -227,7 +287,7 @@ export function TaskDetail({ task, username, nameOf, activeAttachmentId, onBack,
         >
           <p>
             “{task.title}” will be marked as {confirming === 'cancel' ? 'cancelled' : 'done'} and {nameOf(task.creator)} will be notified.
-            {hasAddition && ' Your message will be included.'} You won’t be able to edit it afterwards.
+            {hasDraft && ' The message you are writing will be sent first.'} The conversation becomes read-only afterwards.
           </p>
           {confirming === 'cancel' && (
             <label className="dialog-field">

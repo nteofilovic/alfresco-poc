@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ClipboardList, Paperclip, Plus, RefreshCw, TriangleAlert } from 'lucide-react'
+import { ClipboardList, MessageCircle, Paperclip, Plus, RefreshCw, TriangleAlert } from 'lucide-react'
 import {
   api,
   type NodeDto,
@@ -30,6 +30,8 @@ interface Props {
   activePreviewId: string | null
   onPreview: (node: NodeDto) => void
   onError: (message: string) => void
+  /** Called after a conversation was opened or written to, so the rail badge can catch up. */
+  onActivityChanged: () => void
 }
 
 const SCOPES: { value: TaskScope; label: string }[] = [
@@ -52,6 +54,7 @@ export function TasksPage({
   activePreviewId,
   onPreview,
   onError,
+  onActivityChanged,
 }: Props) {
   const [scope, setScope] = useState<TaskScope>('assigned')
   const [tasks, setTasks] = useState<TaskDto[] | null>(null)
@@ -156,6 +159,7 @@ export function TasksPage({
             activeAttachmentId={activePreviewId}
             onBack={() => setSelected(null)}
             onUpdated={handleUpdated}
+            onMessagesChanged={onActivityChanged}
             onOpenAttachment={openAttachment}
           />
         ) : (
@@ -252,6 +256,13 @@ export function TasksPage({
                           <span className="sr-only">{scope === 'assigned' ? 'From ' : 'To '}</span>
                           {nameOf(scope === 'assigned' ? t.creator : t.assignee)}
                         </span>
+                        {t.unreadMessages > 0 && (
+                          <span className="task-row-unread" title={`${t.unreadMessages} unread messages`}>
+                            <MessageCircle size={13} aria-hidden="true" />
+                            {t.unreadMessages}
+                            <span className="sr-only"> unread messages</span>
+                          </span>
+                        )}
                         <span className="task-row-files" title={`${t.attachments.length} attachments`}>
                           <Paperclip size={13} aria-hidden="true" />
                           {t.attachments.length}
