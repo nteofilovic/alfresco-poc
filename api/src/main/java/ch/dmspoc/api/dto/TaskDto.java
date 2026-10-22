@@ -7,7 +7,7 @@ import java.util.List;
  * process (stable for the whole life of the task); {@code status} is new, in_progress, on_hold, cancelled or done.
  * {@code siteId}/{@code siteTitle} name the space the task belongs to (null when unknown).
  * {@code message} is the legacy single note from before conversations; {@code unreadMessages} counts the
- * other party's messages the viewing user has not opened yet.
+ * other party's messages the viewing user has not opened yet; {@code messageCount} is the whole conversation, for list rows.
  */
 public record TaskDto(
         String id,
@@ -23,7 +23,8 @@ public record TaskDto(
         boolean resolved,
         String siteId,
         String siteTitle,
-        int unreadMessages
+        int unreadMessages,
+        int messageCount
 ) {
 
     /** {@code accessible} is false when the viewing user has no permission on the document (Alfresco ACL). */

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent, CSSProperties, FormEvent } from 'react'
-import { api, type Appearance, type AppStyle, type AuthUser, type FolderTemplate, type NodeDto, type NodeSortDir, type NodeSortKey, type Space } from './api'
+import { api, type Appearance, type AppStyle, type AuthUser, type FolderTemplate, type LiveEvent, type NodeDto, type NodeSortDir, type NodeSortKey, type Space } from './api'
 import { LoginForm } from './LoginForm'
 import { Sidebar, type View } from './components/Sidebar'
 import { SpacesColumn } from './components/SpacesColumn'
@@ -31,6 +31,7 @@ import { SpacesPage } from './components/SpacesPage'
 import { NewFolderDialog } from './components/NewFolderDialog'
 import { NewFromTemplateDialog } from './components/NewFromTemplateDialog'
 import { spaceColor } from './spaceColor'
+import { useLiveEvents } from './hooks/useLiveEvents'
 import { useTaskActivity } from './hooks/useTaskActivity'
 import { useRecentDocuments, type RecentDocument } from './hooks/useRecentDocuments'
 import { PreviewPane, RATIO_MAX, RATIO_MIN } from './components/PreviewPane'
@@ -182,6 +183,20 @@ function App() {
   const [spaceTab, setSpaceTab] = useState<'documents' | 'members'>('documents')
   const [paletteOpen, setPaletteOpen] = useState(false)
   const openPalette = useCallback(() => setPaletteOpen(true), [])
+  // Ctrl/⌘+K opens the palette in every layout. It listens on window in the capture phase, ahead of
+  // every other handler, and claims the key (Chrome would otherwise use it for its own search box).
+  useEffect(() => {
+    if (!username) return
+    function onKeyDown(e: KeyboardEvent) {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return
+      if (e.key.toLowerCase() !== 'k' && e.code !== 'KeyK') return
+      e.preventDefault()
+      e.stopPropagation()
+      setPaletteOpen(true)
+    }
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
+  }, [username])
   const fileInputRef = useRef<HTMLInputElement>(null)
   // A task id to open when the Tasks page mounts (deep link from an activity notice).
   const [pendingTaskId, setPendingTaskId] = useState<string | null>(null)
@@ -189,6 +204,37 @@ function App() {
   const taskActivity = useTaskActivity(username)
   const refreshTaskActivity = taskActivity.refresh
   const resetTaskActivity = taskActivity.reset
+  // Live pushes: the latest event (tasks views refetch from it), a toast with an Open shortcut, and the task being read.
+  const [liveEvent, setLiveEvent] = useState<{ seq: number; event: LiveEvent } | null>(null)
+  const [liveToast, setLiveToast] = useState<{ message: string; taskId: string } | null>(null)
+  const viewingTaskId = useRef<string | null>(null)
+  const setViewingTask = useCallback((id: string | null) => {
+    viewingTaskId.current = id
+  }, [])
+  useEffect(() => {
+    if (!liveToast) return
+    const t = window.setTimeout(() => setLiveToast(null), 7000)
+    return () => window.clearTimeout(t)
+  }, [liveToast])
+  useLiveEvents(
+    username,
+    (event) => {
+      refreshTaskActivity()
+      setLiveEvent((prev) => ({ seq: (prev?.seq ?? 0) + 1, event }))
+      // No toast for the conversation the user is already looking at.
+      if (view === 'tasks' && viewingTaskId.current === event.taskId) return
+      const who = taskActivity.displayNameOf(event.from)
+      const what = event.title ? ` “${event.title}”` : ' a task'
+      const verb = {
+        'task-assigned': 'assigned you',
+        'task-message': 'wrote to you on',
+        'task-completed': 'completed',
+        'task-updated': 'updated',
+      }[event.type]
+      setLiveToast({ message: `${who} ${verb}${what}`, taskId: event.taskId })
+    },
+    refreshTaskActivity,
+  )
   const recentDocs = useRecentDocuments(username)
   const addRecentDoc = recentDocs.add
 
@@ -1114,6 +1160,20 @@ function App() {
         <main className="main">
           {error && <ErrorToast message={error} onDismiss={() => setError(null)} />}
           {!error && notice && <ErrorToast kind="info" message={notice} onDismiss={() => setNotice(null)} />}
+          {!error && !notice && liveToast && (
+            <ErrorToast
+              kind="info"
+              message={liveToast.message}
+              onDismiss={() => setLiveToast(null)}
+              action={{
+                label: 'Open',
+                onClick: () => {
+                  setLiveToast(null)
+                  openTasks(liveToast.taskId)
+                },
+              }}
+            />
+          )}
 
           {view === 'home' && (
             <HomePage
@@ -1143,6 +1203,8 @@ function App() {
               }}
               onError={setError}
               onActivityChanged={refreshTaskActivity}
+              liveEvent={liveEvent}
+              onViewingTask={setViewingTask}
             />
           ) : view === 'profile' ? (
             <ProfilePage username={username} onProfileUpdated={() => {}} appearance={appearance} onAppearanceChange={applyAppearance} />

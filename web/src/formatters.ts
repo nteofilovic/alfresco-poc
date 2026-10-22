@@ -173,3 +173,25 @@ export function validateName(name: string): string | null {
   if (/[\\/*?:"<>|]/.test(name)) return 'A name can’t contain \\ / * ? : " < > |'
   return null
 }
+
+/** "today", "tomorrow", "in 2 days", "3 days overdue"; null without a due date. */
+export function dueNote(dueDate: string | null, now = new Date()): string | null {
+  if (!dueDate) return null
+  const due = parseDay(dueDate)
+  if (Number.isNaN(due.getTime())) return null
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const days = Math.round((new Date(due.getFullYear(), due.getMonth(), due.getDate()).getTime() - today.getTime()) / 86_400_000)
+  if (days === 0) return 'today'
+  if (days === 1) return 'tomorrow'
+  if (days > 1) return `in ${days} days`
+  return `${-days} ${days === -1 ? 'day' : 'days'} overdue`
+}
+
+/** Whole days from today to the due day (negative when overdue); null without a due date. */
+export function daysUntil(dueDate: string | null, now = new Date()): number | null {
+  if (!dueDate) return null
+  const due = parseDay(dueDate)
+  if (Number.isNaN(due.getTime())) return null
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  return Math.round((new Date(due.getFullYear(), due.getMonth(), due.getDate()).getTime() - today.getTime()) / 86_400_000)
+}

@@ -1,4 +1,3 @@
-import { useEffect } from 'react'
 import type { ReactNode } from 'react'
 import { LogOut, Search, UserRound } from 'lucide-react'
 import { initials } from '../formatters'
@@ -21,21 +20,9 @@ interface Props {
 }
 
 /**
- * Command-bar layout: the coloured header with the brand, the search field (opens the command palette, also on
- * Ctrl/⌘+K), notifications and the account menu.
+ * Command-bar layout: the coloured header with the brand, the search field (opens the command palette; Ctrl/⌘+K is handled app-wide in App), notifications and the account menu.
  */
 export function TopHeader({ displayName, view, onNavigate, onLogout, searchQuery, onOpenPalette, notificationCount, notifications }: Props) {
-  useEffect(() => {
-    function onKeyDown(e: KeyboardEvent) {
-      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'k') {
-        e.preventDefault()
-        onOpenPalette()
-      }
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [onOpenPalette])
-
   return (
     <header className="top-header">
       <button type="button" className="top-header-brand" onClick={() => onNavigate('home')} aria-label="Zapis, go to Home">

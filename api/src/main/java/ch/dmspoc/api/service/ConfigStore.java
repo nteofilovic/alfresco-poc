@@ -1,12 +1,16 @@
 package ch.dmspoc.api.service;
 
+import ch.dmspoc.api.exception.AlfrescoApiException;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Supplier;
 
 /**
  * Small documents the app keeps in Alfresco, in {@code Company Home/zapis-config/}, so its settings live
@@ -21,6 +25,8 @@ public class ConfigStore {
     private static final String JSON = "application/json";
 
     private final AlfrescoClient service;
+    /** Folder ids by path: they never change once created, and looking them up costs a call per level on every access. */
+    private final Map<String, String> folderIds = new ConcurrentHashMap<>();
 
     public ConfigStore(@Qualifier("serviceAlfrescoClient") AlfrescoClient service) {
         this.service = service;
@@ -38,15 +44,20 @@ public class ConfigStore {
 
     /** Like {@link #read(String)} for a file in {@code subFolder} of the config folder (null = the folder itself). */
     public Optional<byte[]> read(String subFolder, String fileName) {
-        String fileId = fileId(subFolder, fileName);
-        if (fileId == null) return Optional.empty();
-        byte[] content = service.getContent(fileId);
-        return content == null || content.length == 0 ? Optional.empty() : Optional.of(content);
+        return retryIfFolderGone(() -> {
+            String fileId = fileId(subFolder, fileName);
+            if (fileId == null) return Optional.empty();
+            byte[] content = service.getContent(fileId);
+            return content == null || content.length == 0 ? Optional.empty() : Optional.of(content);
+        });
     }
 
     /** Creates or overwrites a file in {@code subFolder} (null = the config folder itself); folders are created as needed. */
     public void write(String subFolder, String fileName, byte[] content, String contentType) {
-        service.uploadFile(folderId(subFolder, true), fileName, content, contentType, true);
+        retryIfFolderGone(() -> {
+            service.uploadFile(folderId(subFolder, true), fileName, content, contentType, true);
+            return null;
+        });
     }
 
     /** Names of all files in {@code subFolder} (one listing, however many there are); empty when it does not exist. */
@@ -77,8 +88,24 @@ public class ConfigStore {
     }
 
     private String folderId(String subFolder, boolean create) {
+        String key = subFolder == null ? CONFIG_FOLDER : CONFIG_FOLDER + "/" + subFolder;
+        String cached = folderIds.get(key);
+        if (cached != null) return cached;
         String id = childFolderId(REPOSITORY_ROOT, CONFIG_FOLDER, create);
-        return id == null || subFolder == null ? id : childFolderId(id, subFolder, create);
+        if (id != null && subFolder != null) id = childFolderId(id, subFolder, create);
+        if (id != null) folderIds.put(key, id);
+        return id;
+    }
+
+    /** A cached folder id goes stale if someone deletes the folder in Alfresco: forget them all and try once more. */
+    private <T> T retryIfFolderGone(Supplier<T> action) {
+        try {
+            return action.get();
+        } catch (AlfrescoApiException e) {
+            if (e.getStatus() != 404 || folderIds.isEmpty()) throw e;
+            folderIds.clear();
+            return action.get();
+        }
     }
 
     private String childFolderId(String parentId, String name, boolean create) {

@@ -21,6 +21,10 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * Daily task list on top of Alfresco's embedded Activiti, using the stock "Assign a task"
@@ -65,20 +69,28 @@ public class TaskService {
     private final AlfrescoClient userClient;
     private final SpaceService spaces;
     private final TaskMessageStore messages;
+    private final NotificationHub hub;
+    /** Shared by all list requests, so a busy page cannot flood Alfresco with parallel calls. */
+    private static final ExecutorService LIST_POOL = Executors.newFixedThreadPool(8, r -> {
+        Thread t = new Thread(r, "task-list");
+        t.setDaemon(true);
+        return t;
+    });
 
     public TaskService(@Qualifier("serviceAlfrescoClient") AlfrescoClient client, AlfrescoClient userClient, SpaceService spaces,
-                       TaskMessageStore messages) {
+                       TaskMessageStore messages, NotificationHub hub) {
         this.client = client;
         this.userClient = userClient;
         this.spaces = spaces;
         this.messages = messages;
+        this.hub = hub;
     }
 
     /** Site titles, fetched at most once per request and only if a task needs one. */
     private final class Titles {
         private Map<String, String> titles;
 
-        String of(String siteId) {
+        synchronized String of(String siteId) {
             if (siteId == null) return null;
             if (titles == null) titles = spaces.titles();
             return titles.getOrDefault(siteId, siteId);
@@ -87,18 +99,31 @@ public class TaskService {
 
     // ---------------------------------------------------------------- queries
 
-    /** Tasks assigned to ({@code created == false}) or created by the user, newest first. */
+    /**
+     * Tasks assigned to ({@code created == false}) or created by the user, newest first. Rows only need counts, so
+     * attachment names and the per-document access check are left to {@link #get} (the opened task).
+     */
     public List<TaskDto> list(String user, boolean created) {
         String where = created
                 ? "(status='any' AND variables/" + VAR_CREATOR + " = 'd_text " + safe(user) + "')"
                 : "(status='any' AND assignee='" + safe(user) + "')";
-        List<TaskDto> result = new ArrayList<>();
         Titles titles = new Titles();
+        // Each task costs a few Alfresco round trips, so they run side by side instead of one after another.
+        List<CompletableFuture<TaskDto>> pending = new ArrayList<>();
         for (JsonNode item : client.listTasks(where).path("list").path("entries")) {
             JsonNode task = item.path("entry");
             if (!ACTIVITY_WORK.equals(task.path("activityDefinitionId").asText())) continue;
-            TaskDto dto = toDto(task, titles, user);
-            if (dto != null) result.add(dto);
+            pending.add(CompletableFuture.supplyAsync(() -> toDto(task, titles, user, false), LIST_POOL));
+        }
+        List<TaskDto> result = new ArrayList<>();
+        try {
+            for (CompletableFuture<TaskDto> f : pending) {
+                TaskDto dto = f.join();
+                if (dto != null) result.add(dto);
+            }
+        } catch (CompletionException e) {
+            if (e.getCause() instanceof RuntimeException re) throw re;
+            throw e;
         }
         result.sort(Comparator.comparing(TaskDto::createdAt).reversed());
         return result;
@@ -119,23 +144,43 @@ public class TaskService {
      * conversations existed ({@code zapisMessage}) comes first, attributed to the assignee who wrote it.
      */
     public List<TaskMessageDto> messages(String id, String user) {
-        TaskDto task = get(id, user);
+        Map<String, JsonNode> vars = participantVariables(id, user);
         List<TaskMessageDto> result = new ArrayList<>();
-        if (task.message() != null && !task.message().isBlank()) {
-            result.add(new TaskMessageDto("legacy", task.assignee(), task.message(), task.createdAt()));
+        String legacy = text(vars, VAR_MESSAGE);
+        if (legacy != null && !legacy.isBlank()) {
+            JsonNode work = findWorkItem(id);
+            String createdAt = work == null ? null : isoDate(work.path("startedAt").asText(null));
+            result.add(new TaskMessageDto("legacy", text(vars, "bpm_assignee"), legacy, createdAt));
         }
-        for (TaskMessageStore.Message m : messages.thread(id).messages()) {
+        TaskMessageStore.Thread thread = messages.thread(id);
+        for (TaskMessageStore.Message m : thread.messages()) {
             result.add(new TaskMessageDto(m.id(), m.author(), m.text(), m.createdAt()));
         }
-        messages.markRead(id, user);
+        messages.markRead(id, user, thread);
         return result;
+    }
+
+    /**
+     * Process variables of task {@code id} once the user is checked to be its creator or assignee. Enough for the
+     * conversation, which needs none of the attachment, status or space lookups a full {@link TaskDto} costs.
+     */
+    private Map<String, JsonNode> participantVariables(String id, String user) {
+        Map<String, JsonNode> vars = processVariables(id);
+        if (text(vars, VAR_CREATOR) == null) throw new AlfrescoApiException(404, "Task not found");
+        if (!user.equals(text(vars, VAR_CREATOR)) && !user.equals(text(vars, "bpm_assignee"))) {
+            throw new AlfrescoApiException(403, "Not your task");
+        }
+        return vars;
     }
 
     /** Either party may write while the task is open; a finished or cancelled task keeps its conversation read-only. */
     public TaskMessageDto postMessage(String id, String user, String text) {
-        TaskDto task = get(id, user);
-        if (task.resolved()) throw new AlfrescoApiException(409, "The task is already done");
+        Map<String, JsonNode> vars = participantVariables(id, user);
+        JsonNode work = findWorkItem(id);
+        if (work == null) throw new AlfrescoApiException(404, "Task not found");
+        if ("completed".equals(work.path("state").asText())) throw new AlfrescoApiException(409, "The task is already done");
         TaskMessageStore.Message m = messages.append(id, user, text);
+        pushToOther("task-message", id, user, text(vars, "bpm_workflowDescription"), text(vars, VAR_CREATOR), text(vars, "bpm_assignee"));
         return new TaskMessageDto(m.id(), m.author(), m.text(), m.createdAt());
     }
 
@@ -189,6 +234,9 @@ public class TaskService {
             }
             throw e;
         }
+        if (!assignee.equals(username)) {
+            hub.publish(assignee, new NotificationHub.Event("task-assigned", processId, title, username));
+        }
         return load(processId, username);
     }
 
@@ -204,7 +252,9 @@ public class TaskService {
             client.setTaskVariable(taskId, "bpm_status", "d:text", alfrescoStatus, "local");
         }
         if (message != null && !message.isBlank()) messages.append(id, user, message);
-        return load(id, user);
+        TaskDto updated = load(id, user);
+        pushToOther("task-updated", id, user, updated.title(), updated.creator(), updated.assignee());
+        return updated;
     }
 
     public TaskDto resolve(String id, String user, String message, boolean cancelled) {
@@ -218,7 +268,9 @@ public class TaskService {
         if (cancelled) client.setProcessVariable(id, VAR_CANCELLED, "d:text", "true");
         client.setTaskVariable(taskId, "bpm_status", "d:text", "Completed", "local");
         client.setTaskState(taskId, "completed");
-        return load(id, user);
+        TaskDto done = load(id, user);
+        pushToOther(cancelled ? "task-updated" : "task-completed", id, user, done.title(), done.creator(), done.assignee());
+        return done;
     }
 
     // ---------------------------------------------------------- notifications
@@ -250,10 +302,17 @@ public class TaskService {
 
     // ---------------------------------------------------------------- helpers
 
+    /** Tells the other party of the task (creator or assignee) that {@code actor} did something to it. */
+    private void pushToOther(String type, String taskId, String actor, String title, String creator, String assignee) {
+        String other = actor.equals(creator) ? assignee : creator;
+        if (other == null || other.equals(actor)) return;
+        hub.publish(other, new NotificationHub.Event(type, taskId, title, actor));
+    }
+
     /** The task as a DTO; 404 if the process doesn't exist or isn't one of ours. */
     private TaskDto load(String processId, String viewer) {
         JsonNode work = findWorkItem(processId);
-        TaskDto dto = work == null ? null : toDto(work, new Titles(), viewer);
+        TaskDto dto = work == null ? null : toDto(work, new Titles(), viewer, true);
         if (dto == null) throw new AlfrescoApiException(404, "Task not found");
         return dto;
     }
@@ -282,7 +341,7 @@ public class TaskService {
     }
 
     /** Null when the work item belongs to a process this feature didn't start. */
-    private TaskDto toDto(JsonNode task, Titles titles, String viewer) {
+    private TaskDto toDto(JsonNode task, Titles titles, String viewer, boolean checkAccess) {
         String processId = task.path("processId").asText();
         Map<String, JsonNode> vars = processVariables(processId);
         String creator = text(vars, VAR_CREATOR);
@@ -294,16 +353,24 @@ public class TaskService {
         List<TaskDto.Attachment> attachments = new ArrayList<>();
         for (JsonNode item : client.listProcessItems(processId).path("list").path("entries")) {
             String itemId = item.path("entry").path("id").asText();
+            if (!checkAccess) {
+                attachments.add(new TaskDto.Attachment(itemId, "", true));
+                continue;
+            }
             // Alfresco's ACLs decide: a user outside the document's space neither opens it nor learns its name.
             boolean accessible = canRead(itemId);
             attachments.add(new TaskDto.Attachment(itemId, accessible ? item.path("entry").path("name").asText() : "", accessible));
         }
         String title = text(vars, "bpm_workflowDescription");
         String siteId = text(vars, VAR_SITE);
+        TaskMessageStore.Summary convo = messages.summary(processId, viewer);
+        // A note from before conversations is shown as the first message, so it counts as one.
+        boolean legacyNote = text(vars, VAR_MESSAGE) != null && !text(vars, VAR_MESSAGE).isBlank();
         return new TaskDto(processId, title != null ? title : task.path("description").asText(""),
                 text(vars, VAR_DESCRIPTION), isoDate(task.path("startedAt").asText(null)), isoDate(task.path("dueAt").asText(null)),
                 creator, text(vars, "bpm_assignee"), status, text(vars, VAR_MESSAGE), attachments, done,
-                siteId, titles.of(siteId), messages.unread(processId, viewer));
+                siteId, titles.of(siteId),
+                convo.unread(), convo.count() + (legacyNote ? 1 : 0));
     }
 
     /** Whether the logged-in user may read the node (ticket call: Alfresco answers 403/404 otherwise). */

@@ -28,20 +28,6 @@ export function Topbar({
   notificationCount,
   notifications,
 }: Props) {
-  const inputRef = useRef<HTMLInputElement>(null)
-
-  useEffect(() => {
-    function onKeyDown(e: KeyboardEvent) {
-      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'k') {
-        e.preventDefault()
-        inputRef.current?.focus()
-        inputRef.current?.select()
-      }
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [])
-
   return (
     <header className="topbar">
       <div className="topbar-title">{title}</div>
@@ -50,7 +36,6 @@ export function Topbar({
           <Search size={18} strokeWidth={1.8} className="search-field-icon" aria-hidden="true" />
           <span className="sr-only">Search documents</span>
           <input
-            ref={inputRef}
             type="search"
             placeholder="Search all documents"
             value={searchQuery}

@@ -1,3 +1,4 @@
+
 package ch.dmspoc.api.service;
 
 import ch.dmspoc.api.exception.AlfrescoApiException;
@@ -64,6 +65,12 @@ public class TaskMessageStore {
         }
     }
 
+    /** Marks read using a thread the caller just loaded, so the common case (nothing new) costs no extra reads. */
+    public void markRead(String taskId, String user, Thread loaded) {
+        if (loaded.readBy().getOrDefault(user, 0) >= loaded.messages().size()) return;
+        markRead(taskId, user);
+    }
+
     public void markRead(String taskId, String user) {
         synchronized (lock(taskId)) {
             Thread current = thread(taskId);
@@ -76,13 +83,22 @@ public class TaskMessageStore {
 
     /** Messages from the other party that {@code user} has not seen yet. */
     public int unread(String taskId, String user) {
+        return summary(taskId, user).unread();
+    }
+
+    /** What a task list row shows of a conversation, from one read of the thread. */
+    public record Summary(int unread, int count) {
+    }
+
+    public Summary summary(String taskId, String user) {
         Thread current = thread(taskId);
+        List<Message> all = current.messages();
         int seen = current.readBy().getOrDefault(user, 0);
-        int count = 0;
-        for (int i = seen; i < current.messages().size(); i++) {
-            if (!user.equals(current.messages().get(i).author())) count++;
+        int unread = 0;
+        for (int i = seen; i < all.size(); i++) {
+            if (!user.equals(all.get(i).author())) unread++;
         }
-        return count;
+        return new Summary(unread, all.size());
     }
 
     private void save(String taskId, Thread thread) {

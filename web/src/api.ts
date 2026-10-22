@@ -71,8 +71,11 @@ function normalizeTask(t: TaskDto): TaskDto {
     siteId: t.siteId ?? null,
     siteTitle: t.siteTitle ?? null,
     unreadMessages: t.unreadMessages ?? 0,
+    messageCount: t.messageCount ?? 0,
   }
 }
+
+const taskListsInFlight = new Map<TaskScope, Promise<TaskDto[]>>()
 
 export interface AuthUser {
   username: string
@@ -190,6 +193,8 @@ export interface TaskDto {
   siteTitle: string | null
   /** The other party's messages the viewer has not opened yet. */
   unreadMessages: number
+  /** The whole conversation, for list rows. */
+  messageCount: number
 }
 
 export interface TaskMessage {
@@ -207,6 +212,14 @@ export interface NewTask {
   assignee: string
   attachmentIds: string[]
   siteId?: string
+}
+
+/** A push from the server about a task; `from` is the username who caused it, `title` may be null. */
+export interface LiveEvent {
+  type: 'task-assigned' | 'task-message' | 'task-updated' | 'task-completed'
+  taskId: string
+  title: string | null
+  from: string
 }
 
 export interface TaskNotification {
@@ -481,10 +494,17 @@ export const api = {
 
   me: () => fetch('/api/auth/me', { credentials: 'include' }).then((r) => handle<AuthUser>(r)),
 
-  listTasks: (scope: TaskScope) =>
-    fetch(`/api/tasks?scope=${scope}`, { credentials: 'include' })
+  // The Tasks page and the activity badge ask for the same lists at the same moment; they share one request.
+  listTasks: (scope: TaskScope) => {
+    const running = taskListsInFlight.get(scope)
+    if (running) return running
+    const request = fetch(`/api/tasks?scope=${scope}`, { credentials: 'include' })
       .then((r) => handle<TaskDto[]>(r))
-      .then((list) => list.map(normalizeTask)),
+      .then((list) => list.map(normalizeTask))
+      .finally(() => taskListsInFlight.delete(scope))
+    taskListsInFlight.set(scope, request)
+    return request
+  },
 
   getTask: (id: string) =>
     fetch(`/api/tasks/${encodeURIComponent(id)}`, { credentials: 'include' })
