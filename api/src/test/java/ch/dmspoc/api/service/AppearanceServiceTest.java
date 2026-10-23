@@ -118,4 +118,98 @@ class AppearanceServiceTest {
         AppearanceService reloaded = new AppearanceService(store, new ObjectMapper());
         assertEquals(new AppearanceSettings(AppearanceService.COMMAND_BAR, false), reloaded.settings());
     }
+
+    @Test
+    void blankStylesClearTheChoiceToo() {
+        service.setUserStyle("anna", AppearanceService.COMMAND_BAR);
+
+        AppearanceDto dto = service.setUserStyle("anna", "   ");
+
+        assertNull(dto.userStyle());
+        assertEquals(AppearanceService.THREE_PANE, dto.style());
+    }
+
+    @Test
+    void styleNamesAreTrimmed() {
+        assertEquals(AppearanceService.COMMAND_BAR, service.setUserStyle("anna", "  command-bar ").userStyle());
+        assertEquals(AppearanceService.COMMAND_BAR,
+                service.updateSettings(new AppearanceSettings(" command-bar ", true)).defaultStyle());
+    }
+
+    @Test
+    void clearingTheChoiceOfSomeoneWithNoneIsHarmless() {
+        AppearanceDto dto = service.setUserStyle("nobody", null);
+
+        assertNull(dto.userStyle());
+    }
+
+    @Test
+    void anEmptyStoredDocumentGetsAllDefaults() {
+        store.files.put("appearance.json", "{}".getBytes(StandardCharsets.UTF_8));
+
+        assertEquals(new AppearanceSettings(AppearanceService.THREE_PANE, true), service.settings());
+        assertEquals(AppearanceService.THREE_PANE, service.forUser("anna").style());
+    }
+
+    @Test
+    void aStoredLockIsHonored() {
+        store.files.put("appearance.json", """
+                {"defaultStyle":"command-bar","allowUserChoice":false,"userStyles":{"anna":"three-pane"}}
+                """.getBytes(StandardCharsets.UTF_8));
+
+        AppearanceDto dto = service.forUser("anna");
+        assertEquals(AppearanceService.COMMAND_BAR, dto.style());
+        assertEquals(AppearanceService.THREE_PANE, dto.userStyle());
+        assertFalse(dto.allowUserChoice());
+    }
+
+    @Test
+    void aStoredDocumentWithoutUserStylesIsFine() {
+        store.files.put("appearance.json", "{\"defaultStyle\":\"command-bar\"}".getBytes(StandardCharsets.UTF_8));
+
+        assertEquals(AppearanceService.COMMAND_BAR, service.forUser("anna").style());
+        assertEquals(AppearanceService.COMMAND_BAR, service.setUserStyle("ben", AppearanceService.COMMAND_BAR).style());
+    }
+
+    @Test
+    void updatingTheSettingsKeepsEveryonesChoice() {
+        service.setUserStyle("anna", AppearanceService.COMMAND_BAR);
+        service.setUserStyle("ben", AppearanceService.THREE_PANE);
+
+        service.updateSettings(new AppearanceSettings(AppearanceService.COMMAND_BAR, true));
+
+        assertEquals(AppearanceService.COMMAND_BAR, service.forUser("anna").userStyle());
+        assertEquals(AppearanceService.THREE_PANE, service.forUser("ben").userStyle());
+    }
+
+    @Test
+    void aRefusedSettingsUpdateChangesNothing() {
+        service.updateSettings(new AppearanceSettings(AppearanceService.COMMAND_BAR, false));
+
+        assertThrows(AlfrescoApiException.class, () -> service.updateSettings(new AppearanceSettings("bogus", true)));
+
+        assertEquals(new AppearanceSettings(AppearanceService.COMMAND_BAR, false), service.settings());
+    }
+
+    @Test
+    void aNullStoredStyleIsIgnoredLikeAnUnknownOne() {
+        store.files.put("appearance.json", """
+                {"defaultStyle":"command-bar","userStyles":{"anna":null,"ben":"three-pane"}}
+                """.getBytes(StandardCharsets.UTF_8));
+
+        assertNull(service.forUser("anna").userStyle());
+        assertEquals(AppearanceService.THREE_PANE, service.forUser("ben").userStyle());
+    }
+
+    @Test
+    void aDamagedStoredDocumentIsReportedNotReplacedByDefaults() {
+        store.files.put("appearance.json", "garbage".getBytes(StandardCharsets.UTF_8));
+
+        assertThrows(RuntimeException.class, () -> service.forUser("anna"));
+    }
+
+    @Test
+    void thePublishedStylesAreThreePaneFirstThenCommandBar() {
+        assertEquals(java.util.List.of("three-pane", "command-bar"), AppearanceService.STYLES);
+    }
 }

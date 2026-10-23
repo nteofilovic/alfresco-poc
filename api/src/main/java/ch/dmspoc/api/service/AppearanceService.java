@@ -89,12 +89,13 @@ public class AppearanceService {
     /** The stored config with defaults filled in; styles the app no longer knows are dropped. */
     private Config read() {
         Config raw = store.read(CONFIG_FILE).map(content -> mapper.readValue(content, Config.class)).orElse(null);
-        String defaultStyle = raw != null && STYLES.contains(raw.defaultStyle()) ? raw.defaultStyle() : STYLES.getFirst();
+        String defaultStyle = raw != null && raw.defaultStyle() != null && STYLES.contains(raw.defaultStyle())
+                ? raw.defaultStyle() : STYLES.getFirst();
         boolean allow = raw == null || raw.allowUserChoice() == null || raw.allowUserChoice();
         Map<String, String> userStyles = new TreeMap<>();
         if (raw != null && raw.userStyles() != null) {
             raw.userStyles().forEach((user, style) -> {
-                if (STYLES.contains(style)) userStyles.put(user, style);
+                if (style != null && STYLES.contains(style)) userStyles.put(user, style);
             });
         }
         return new Config(defaultStyle, allow, userStyles);
